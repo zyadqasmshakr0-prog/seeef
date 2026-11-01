@@ -1,0 +1,952 @@
+import pygame
+import math
+import random
+
+GROUND_Y = 570
+
+class StageLayout:
+    def __init__(self, stage=1):
+        self.stage = ((int(stage) - 1) % 12) + 1
+        self.stage_length = 35000
+        self.gate_x = self.stage_length - 800
+        self.rng = random.Random(self.stage * 777)
+
+        self.platforms = []
+        self.bridge_rects = []
+        self.dynamic_plat_rects = []
+        self.hazards = []
+        self.trees = []
+        self.acid_pools = []
+        self.wrecking_balls = []
+        self.mountains = []
+
+        self.projectiles = []
+        self.surprise_triggered = False
+        self.surprise_timer = 0
+        self.screen_shake = 0
+        self.blizzard_timer = 0
+        self.ghosts_spawned = False
+
+        self.factory_state = "normal"
+        self.gravity_Inverted = False
+        self.zero_g_active = False
+        self.mirror_history = []
+        self.eye_open = False
+        self.glitch_timer = 0
+        self.fake_crash_timer = 0
+
+        self.weather_particles = [
+            {"x": self.rng.randint(0, 1280), "y": self.rng.randint(0, 720), "s": self.rng.randint(2, 6)}
+            for _ in range(95)
+        ]
+        self._crash_font = None
+
+        self.build_stage()
+
+    def add_plat(self, x, y, w, h, dynamic=False):
+        r = pygame.Rect(int(x), int(y), int(w), int(h))
+        self.platforms.append(r)
+        if dynamic:
+            self.dynamic_plat_rects.append(r)
+        return r
+
+    def add_tree(self, x, y, t_type="normal"):
+        self.trees.append({
+            "x": x, "y": y, "type": t_type,
+            "triggered": False, "particles": []
+        })
+
+    def add_haz(self, x, y, w, h, h_type, **kwargs):
+        rect = pygame.Rect(int(x), int(y), int(w), int(h))
+        h_obj = {
+            "rect": rect,
+            "base_x": int(x),
+            "base_y": int(y),
+            "type": h_type,
+            "triggered": False,
+            "trigger_time": 0,
+            "fallen": False,
+            "active": False
+        }
+        h_obj.update(kwargs)
+
+        solid_types = [
+            "trap_bridge", "stone_bridge", "lava_bridge", "ice_bridge",
+            "fragile_plat", "collapsing_floor", "trap_door", "moving_pillar",
+            "cracking_ice", "conveyor_belt", "moving_platform", "sliding_gate",
+            "shipwreck_debris", "giant_spine", "vertebrae_column", "moving_bones",
+            "magnetic_platform", "rotating_room", "airlock_door", "synchronized_platform",
+            "illusion_wall", "shadow_pillar", "phantom_plat"
+        ]
+        if h_type in solid_types:
+            p_rect = self.add_plat(x, y, w, h, dynamic=True)
+            h_obj["plat_rect"] = p_rect
+            if "bridge" in h_type or h_type in ["giant_spine", "phantom_plat"]:
+                self.bridge_rects.append(p_rect)
+
+        if h_type in ["quicksand", "lava", "ice_spikes", "boiling_blood", "whirlpool"]:
+            self.acid_pools.append(rect)
+
+        self.hazards.append(h_obj)
+        return h_obj
+
+    def build_stage(self):
+        self.platforms.clear()
+        self.bridge_rects.clear()
+        self.dynamic_plat_rects.clear()
+        self.hazards.clear()
+        self.trees.clear()
+        self.acid_pools.clear()
+        self.mountains.clear()
+        self.projectiles.clear()
+        self.surprise_triggered = False
+        self.surprise_timer = 0
+        self.screen_shake = 0
+        self.blizzard_timer = 0
+        self.ghosts_spawned = False
+        self.factory_state = "normal"
+        self.gravity_Inverted = False
+        self.zero_g_active = False
+        self.mirror_history.clear()
+        self.eye_open = False
+        self.glitch_timer = 0
+        self.fake_crash_timer = 0
+
+        builders = {
+            1: self.build_stage1, 2: self.build_stage2, 3: self.build_stage3,
+            4: self.build_stage4, 5: self.build_stage5, 6: self.build_stage6,
+            7: self.build_stage7, 8: self.build_stage8, 9: self.build_stage9,
+            10: self.build_stage10, 11: self.build_stage11, 12: self.build_stage12
+        }
+        builders[self.stage]()
+
+    def build_stage1(self):
+        self.add_plat(0, GROUND_Y, 3000, 800)
+        for x in range(400, 2800, 350):
+            if self.rng.random() < 0.55: self.add_haz(x, GROUND_Y - 45, 40, 45, "fake_tree")
+            else: self.add_tree(x, GROUND_Y, "normal")
+            if self.rng.random() < 0.45: self.add_haz(x + 150, GROUND_Y - 220, 70, 25, "falling_branch")
+        self.add_haz(3000, GROUND_Y + 80, 3000, 800, "void")
+        for x in range(3050, 5950, 260):
+            self.add_plat(x, GROUND_Y - 40, 130, 14)
+        self.add_plat(6000, GROUND_Y, 500, 800)
+        cx, cy = 6500, GROUND_Y
+        for i in range(1, 7):
+            cy -= 45
+            self.add_plat(cx, cy, 250, GROUND_Y - cy + 800)
+            if i % 2 == 1: self.add_haz(cx + 100, cy - 45, 40, 45, "fake_tree")
+            cx += 250
+        for i in range(6, 0, -1):
+            self.add_plat(cx, cy, 250, GROUND_Y - cy + 800)
+            cx += 250; cy += 45
+        self.add_plat(9500, GROUND_Y, 900, 800)
+        self.add_haz(10400, GROUND_Y + 60, 2200, 800, "void")
+        for bx in range(10400, 12600, 550):
+            self.add_haz(bx, GROUND_Y, 520, 28, "trap_bridge", delay=2000)
+        self.add_plat(12600, GROUND_Y, 400, 800)
+        self.add_haz(13000, GROUND_Y + 80, 4000, 800, "void")
+        cx = 13000
+        while cx < 16900:
+            self.add_plat(cx, GROUND_Y, 140, 800)
+            if self.rng.random() < 0.35: self.add_haz(cx + 45, GROUND_Y - 40, 40, 40, "hidden_rock")
+            cx += 290
+        self.add_plat(17000, GROUND_Y, 4400, 800)
+        for x in range(17200, 20800, 280):
+            self.add_tree(x, GROUND_Y, "explosive" if self.rng.random() < 0.65 else "normal")
+        cx, cy = 21400, GROUND_Y
+        for i in range(8):
+            cy -= 45; self.add_plat(cx, cy, 200, GROUND_Y - cy + 800); self.add_haz(cx + 80, cy - 40, 40, 40, "hidden_rock"); cx += 200
+        for i in range(8):
+            self.add_plat(cx, cy, 200, GROUND_Y - cy + 800); cx += 200; cy += 45
+        self.add_plat(24600, GROUND_Y, 10400, 800)
+        for x in range(25300, 29700, 350):
+            self.add_haz(x, GROUND_Y - 40, 45, 40, "hidden_rock" if self.rng.random() < 0.5 else "fake_tree")
+
+    def build_stage2(self):
+        self.add_plat(0, GROUND_Y, 8000, 800)
+        for x in range(500, 3800, 380): self.add_haz(x, GROUND_Y - 35, 50, 35, "glow_spike")
+        self.add_plat(4000, GROUND_Y - 340, 4000, 50)
+        for x in range(4300, 7800, 320): self.add_haz(x, GROUND_Y - 290, 35, 65, "ceiling_stalactite")
+        self.add_haz(8000, GROUND_Y + 80, 4000, 800, "void")
+        for x in range(8050, 11900, 320):
+            self.add_plat(x, GROUND_Y - (x % 3) * 40, 180, 25)
+            self.add_haz(x + 250, GROUND_Y - 130, 40, 30, "line_bat", vx=-7)
+        self.add_plat(12000, GROUND_Y, 300, 800)
+        self.add_haz(12300, GROUND_Y + 80, 3400, 800, "void")
+        for bx in range(12300, 15700, 560): self.add_haz(bx, GROUND_Y, 530, 32, "stone_bridge", delay=1500)
+        self.add_plat(15700, GROUND_Y, 4300, 800)
+        for i in range(5):
+            lx = 16500 + i * 700
+            self.add_haz(lx, GROUND_Y - 120, 40, 120, "lantern")
+            self.add_haz(lx + 200, GROUND_Y - 35, 50, 35, "glow_spike")
+        self.add_haz(20000, GROUND_Y + 80, 1000, 800, "void")
+        for rx in range(20000, 20900, 180): self.add_haz(rx, GROUND_Y, 175, 30, "trap_door", surprise_group=True)
+        self.add_plat(20900, GROUND_Y, 3100, 800)
+        cx, cy = 24000, GROUND_Y
+        for i in range(10): cy -= 40; self.add_plat(cx, cy, 180, GROUND_Y - cy + 800); cx += 180
+        for i in range(10): self.add_plat(cx, cy, 180, GROUND_Y - cy + 800); cx += 180; cy += 40
+        self.add_plat(27600, GROUND_Y, 400, 800)
+        self.add_haz(28000, GROUND_Y + 80, 4000, 800, "void")
+        cx = 28000
+        while cx < 32000:
+            self.add_plat(cx, GROUND_Y, 160, 800); self.add_haz(cx + 160, GROUND_Y, 160, 30, "trap_door"); cx += 320
+        self.add_plat(32000, GROUND_Y, 3000, 800)
+
+    def build_stage3(self):
+        self.add_plat(0, GROUND_Y, 7500, 800)
+        for x in range(500, 3300, 420): self.add_haz(x, GROUND_Y - 12, 70, 12, "pressure_plate")
+        for x in range(3700, 7200, 550): self.add_haz(x, GROUND_Y - 5, 320, 45, "quicksand")
+        self.add_haz(7500, GROUND_Y + 80, 4500, 800, "void")
+        for i, x in enumerate(range(7600, 11850, 280)): self.add_haz(x, GROUND_Y - 40, 140, 500, "moving_pillar", phase=i * 0.9)
+        self.add_plat(12000, GROUND_Y, 4400, 800)
+        for x in range(12500, 15800, 650): self.add_haz(x, GROUND_Y - 90, 40, 90, "dart_statue", last_shot=0)
+        self.add_haz(16400, GROUND_Y + 80, 3400, 800, "void")
+        for x in range(16450, 19750, 210): self.add_haz(x, GROUND_Y, 145, 22, "fragile_plat", chain=(17000 <= x <= 19500))
+        self.add_plat(19800, GROUND_Y, 200, 800)
+        cx, cy = 20000, GROUND_Y
+        for i in range(8): cy -= 45; self.add_plat(cx, cy, 220, GROUND_Y - cy + 800); self.add_haz(cx + 75, cy - 12, 70, 12, "pressure_plate"); cx += 220
+        for i in range(8): self.add_plat(cx, cy, 220, GROUND_Y - cy + 800); cx += 220; cy += 45
+        self.add_plat(23520, GROUND_Y, 11480, 800)
+        self.add_haz(24200, GROUND_Y - 5, 3600, 50, "quicksand")
+        for bx in range(24250, 27650, 520): self.add_haz(bx, GROUND_Y - 95, 380, 24, "trap_bridge", delay=1400)
+        for x in range(28400, 31700, 550): self.add_haz(x, GROUND_Y - 90, 40, 90, "dart_statue", last_shot=0)
+
+    def build_stage4(self):
+        self.add_plat(0, GROUND_Y, 3000, 800)
+        for x in range(500, 2800, 450): self.add_haz(x, GROUND_Y - 10, 60, 15, "heat_crack")
+        self.add_haz(3000, GROUND_Y + 80, 3000, 800, "void")
+        for x in range(3000, 6000, 150): self.add_haz(x, GROUND_Y, 148, 30, "collapsing_floor", delay=280)
+        self.add_plat(6000, GROUND_Y, 4400, 800)
+        for x in range(6300, 9800, 350): self.add_haz(x, GROUND_Y - 420, 45, 45, "falling_meteor")
+        self.add_plat(10400, GROUND_Y + 35, 3200, 800)
+        self.add_haz(10400, GROUND_Y + 10, 3200, 50, "lava")
+        for bx in range(10450, 13500, 520): self.add_haz(bx, GROUND_Y - 35, 440, 26, "lava_bridge", delay=1500)
+        self.add_plat(13600, GROUND_Y, 4400, 800)
+        for i, x in enumerate(range(14300, 17800, 340)): self.add_haz(x, GROUND_Y - 110, 45, 110, "fire_geyser", offset=i * 500)
+        cx, cy = 18000, GROUND_Y
+        for i in range(8): cy -= 45; self.add_plat(cx, cy, 220, GROUND_Y - cy + 800); cx += 220
+        for i in range(8): self.add_plat(cx, cy, 220, GROUND_Y - cy + 800); cx += 220; cy += 45
+        self.add_plat(21520, GROUND_Y, 480, 800)
+        self.add_haz(22000, GROUND_Y + 80, 4000, 800, "void")
+        for x in range(22000, 26000, 170): self.add_haz(x, GROUND_Y, 165, 30, "collapsing_floor", delay=300)
+        self.add_plat(26000, GROUND_Y, 4000, 800)
+        for x in range(26300, 29700, 500): self.add_haz(x, GROUND_Y, 220, 35, "lava")
+        self.add_haz(30000, GROUND_Y + 80, 2000, 800, "void")
+        for x in range(30050, 31950, 240): self.add_plat(x, GROUND_Y, 120, 30)
+        self.add_plat(32000, GROUND_Y, 3000, 800)
+
+    def build_stage5(self):
+        self.add_plat(0, GROUND_Y, 4000, 800)
+        self.add_haz(200, GROUND_Y - 10, 3700, 20, "slippery_ice")
+        self.add_haz(4000, GROUND_Y + 80, 4000, 800, "void")
+        for x in range(4000, 8000, 240): self.add_haz(x, GROUND_Y, 225, 30, "cracking_ice", delay=1500)
+        self.add_plat(8000, GROUND_Y, 4000, 800)
+        self.add_haz(8200, GROUND_Y - 300, 1700, 300, "wind_zone", force=-3.5)
+        self.add_haz(10100, GROUND_Y - 300, 1700, 300, "wind_zone", force=3.5)
+        self.add_haz(12000, GROUND_Y + 80, 4000, 800, "void")
+        for x in range(12050, 15950, 270):
+            self.add_plat(x, GROUND_Y, 135, 800); self.add_haz(x, GROUND_Y - 10, 135, 20, "slippery_ice")
+        self.add_plat(16000, GROUND_Y, 300, 800)
+        self.add_haz(16300, GROUND_Y + 80, 3400, 800, "void")
+        for bx in range(16300, 19700, 560): self.add_haz(bx, GROUND_Y, 530, 28, "ice_bridge", delay=1500, regen=5000)
+        self.add_plat(19700, GROUND_Y, 4300, 800)
+        self.add_haz(20000, GROUND_Y - 10, 4000, 20, "slippery_ice")
+        for x in range(20400, 23700, 520): self.add_haz(x, GROUND_Y - 15, 220, 35, "ice_spikes")
+        cx, cy = 24000, GROUND_Y
+        for i in range(8): cy -= 45; self.add_plat(cx, cy, 220, GROUND_Y - cy + 800); self.add_haz(cx, cy - 10, 220, 20, "slippery_ice"); cx += 220
+        for i in range(8): self.add_plat(cx, cy, 220, GROUND_Y - cy + 800); cx += 220; cy += 45
+        self.add_plat(27520, GROUND_Y, 7480, 800)
+        self.add_haz(28200, GROUND_Y - 300, 3600, 300, "wind_zone", force=-3.0)
+
+    def build_stage6(self):
+        self.add_plat(0, GROUND_Y, 3500, 800)
+        for i, x in enumerate(range(400, 3300, 500)):
+            spd = 4.2 if i % 2 == 0 else -4.2
+            self.add_haz(x, GROUND_Y - 18, 420, 22, "conveyor_belt", speed=spd)
+        self.add_plat(3500, GROUND_Y, 3500, 800)
+        for i, x in enumerate(range(3800, 6800, 480)):
+            self.add_haz(x, GROUND_Y - 95, 130, 130, "giant_gears", radius=65, speed=4 if i%2==0 else -4)
+        self.add_plat(7000, GROUND_Y, 4000, 800)
+        self.add_plat(7000, GROUND_Y - 360, 4000, 45)
+        for i, x in enumerate(range(7300, 10800, 380)):
+            self.add_haz(x, GROUND_Y - 315, 110, 220, "crusher_press", phase=i * 600)
+        self.add_haz(11000, GROUND_Y + 80, 4000, 800, "void")
+        for i, x in enumerate(range(11100, 14800, 420)):
+            self.add_haz(x, GROUND_Y - 30, 190, 26, "moving_platform", span=160, phase=i * 1.1)
+            self.add_haz(x + 150, GROUND_Y + 20, 100, 100, "giant_gears", radius=50, speed=5)
+        self.add_plat(15000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(15350, 18800, 460)):
+            self.add_haz(x, GROUND_Y - 260, 90, 220, "swing_arm", phase=i * 0.8)
+        self.add_plat(19000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(19300, 22800, 440)):
+            self.add_haz(x, GROUND_Y - 190, 45, 190, "sliding_gate", phase=i * 700)
+        self.add_plat(23000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(23300, 26700, 480)):
+            self.add_haz(x, GROUND_Y - 18, 380, 22, "conveyor_belt", speed=-5.5)
+            self.add_haz(x + 160, GROUND_Y - 120, 70, 120, "pressure_pipe", push=-8.0, phase=i * 500)
+        self.add_haz(27000, GROUND_Y + 80, 4000, 800, "void")
+        cx, cy = 27100, GROUND_Y
+        for i in range(9):
+            cy -= 38
+            self.add_haz(cx, cy, 190, 25, "moving_platform", span=110, phase=i * 0.7)
+            cx += 210
+        for i in range(9):
+            self.add_haz(cx, cy, 190, 25, "moving_platform", span=110, phase=i * 0.7)
+            cx += 210
+            cy += 38
+        self.add_plat(31000, GROUND_Y, 4000, 800)
+
+    def build_stage7(self):
+        self.add_plat(0, GROUND_Y, 3500, 800)
+        self.add_haz(400, GROUND_Y - 260, 2800, 260, "water_current", vx=-2.2, vy=0)
+        self.add_plat(3500, GROUND_Y, 3500, 800)
+        for x in range(3800, 6800, 360):
+            self.add_haz(x, GROUND_Y - 75, 70, 75, "sea_plant")
+            if x % 720 == 0:
+                self.add_haz(x + 180, GROUND_Y - 140, 60, 60, "air_pocket")
+        self.add_plat(7000, GROUND_Y, 4000, 800)
+        for x in range(7350, 10700, 520):
+            self.add_haz(x, GROUND_Y - 130, 180, 140, "whirlpool")
+        self.add_haz(11000, GROUND_Y + 80, 4000, 800, "void")
+        for i, x in enumerate(range(11100, 14850, 360)):
+            self.add_haz(x, GROUND_Y - (i % 3) * 35, 190, 32, "shipwreck_debris", span=130, phase=i * 0.9)
+        self.add_plat(15000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(15400, 18700, 550)):
+            self.add_haz(x, GROUND_Y - 220, 90, 220, "flood_gate", phase=i * 700)
+        self.add_plat(19000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(19300, 22800, 450)):
+            self.add_haz(x, GROUND_Y - 120 - (i % 2) * 70, 75, 35, "predator_fish")
+            self.add_plat(x - 120, GROUND_Y - 85, 45, 85)
+        self.add_plat(23000, GROUND_Y, 4000, 800)
+        for x in range(23300, 26800, 340):
+            self.add_haz(x, GROUND_Y - 90 - (x % 3) * 40, 55, 55, "pressure_bubble")
+        self.add_haz(27000, GROUND_Y + 80, 4000, 800, "void")
+        for x in range(27100, 30850, 380):
+            self.add_plat(x, GROUND_Y - 40, 140, 25)
+            self.add_haz(x + 160, GROUND_Y - 320, 140, 340, "water_current", vx=1.5, vy=-5.5)
+        self.add_plat(31000, GROUND_Y, 4000, 800)
+
+    def build_stage8(self):
+        self.add_plat(0, GROUND_Y, 4000, 800)
+        for x in range(600, 3800, 520):
+            self.add_haz(x, GROUND_Y - 65, 65, 65, "rolling_skull", vx=-6.5)
+        self.add_plat(4000, GROUND_Y, 4000, 800)
+        for x in range(4300, 7800, 380):
+            self.add_haz(x, GROUND_Y - 170, 55, 130, "giant_ribs")
+        self.add_plat(8000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(8350, 11700, 540)):
+            self.add_haz(x, GROUND_Y - 360, 180, 360, "colossus_foot", phase=i * 800)
+        self.add_plat(12000, GROUND_Y, 4000, 800)
+        for x in range(12300, 15800, 360):
+            self.add_haz(x, GROUND_Y - 95, 70, 95, "stone_hand")
+        self.add_haz(16000, GROUND_Y + 80, 4000, 800, "void")
+        for bx in range(16050, 19850, 480):
+            self.add_haz(bx, GROUND_Y, 430, 30, "giant_spine", delay=1300)
+        self.add_plat(20000, GROUND_Y, 4000, 800)
+        for x in range(20400, 23700, 580):
+            self.add_haz(x, GROUND_Y - 130, 55, 130, "stone_eye", last_shot=0)
+            self.add_haz(x - 220, GROUND_Y - 90, 45, 90, "moving_bones")
+        self.add_haz(24000, GROUND_Y + 80, 4000, 800, "void")
+        for i, x in enumerate(range(24100, 27850, 280)):
+            self.add_haz(x, GROUND_Y - 30, 150, 450, "vertebrae_column", phase=i * 0.85)
+        self.add_plat(28000, GROUND_Y, 4000, 800)
+        for x in range(28600, 31600, 500):
+            self.add_haz(x, GROUND_Y - 95, 70, 95, "stone_hand")
+        self.add_plat(32000, GROUND_Y, 3000, 800)
+
+    def build_stage9(self):
+        self.add_plat(0, GROUND_Y, 3500, 800)
+        for x in range(500, 3300, 420):
+            self.add_haz(x, GROUND_Y - 120 - (x % 3) * 50, 45, 45, "space_debris", vx=-6, vy=2)
+        self.add_plat(3500, GROUND_Y, 3500, 800)
+        self.add_haz(3600, GROUND_Y - 380, 3300, 380, "zero_gravity")
+        for x in range(3800, 6700, 450):
+            self.add_haz(x, GROUND_Y - 180, 35, 180, "energy_wall", phase=x)
+        self.add_plat(7000, GROUND_Y, 4000, 800)
+        self.add_plat(7000, GROUND_Y - 380, 4000, 40)
+        for x in range(7400, 10600, 600):
+            self.add_haz(x, GROUND_Y - 60, 60, 60, "gravity_switch")
+        self.add_plat(11000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(11300, 14800, 420)):
+            self.add_haz(x, GROUND_Y - 220, 90, 220, "cross_laser", phase=i * 500)
+        self.add_haz(15000, GROUND_Y + 80, 4000, 800, "void")
+        for x in range(15100, 18850, 340):
+            self.add_haz(x, GROUND_Y - 40 - (x % 2) * 55, 175, 28, "magnetic_platform")
+        self.add_haz(19000, GROUND_Y + 80, 4000, 800, "void")
+        for i, x in enumerate(range(19100, 22850, 380)):
+            self.add_haz(x, GROUND_Y - 20, 240, 28, "rotating_room", phase=i * 900)
+        self.add_plat(23000, GROUND_Y, 4000, 800)
+        for i, x in enumerate(range(23400, 26700, 480)):
+            self.add_haz(x, GROUND_Y - 200, 50, 200, "airlock_door", phase=i * 650)
+        self.add_plat(27000, GROUND_Y, 4000, 800)
+        for x in range(27300, 30800, 360):
+            self.add_haz(x, GROUND_Y - 140, 50, 50, "space_debris", vx=-9, vy=0)
+            self.add_haz(x + 150, GROUND_Y - 200, 40, 200, "energy_wall", phase=x)
+        self.add_plat(31000, GROUND_Y, 4000, 800)
+
+    def build_stage10(self):
+        self.add_plat(0, GROUND_Y, 1200, 800)
+        self.add_haz(1200, GROUND_Y + 80, 2300, 800, "void")
+        for i, x in enumerate(range(1250, 3400, 240)):
+            if i % 2 == 0:
+                self.add_plat(x, GROUND_Y, 160, 30)
+            else:
+                self.add_haz(x, GROUND_Y, 160, 30, "mirror_floor")
+                self.add_plat(x, GROUND_Y - 95, 150, 24)
+        self.add_plat(3500, GROUND_Y, 3500, 800)
+        self.add_haz(3700, GROUND_Y - 300, 3100, 300, "inverted_corridor")
+        for x in range(3900, 6600, 450):
+            self.add_haz(x, GROUND_Y - 40, 45, 40, "shattered_mirror")
+        self.add_plat(7000, GROUND_Y, 4000, 800)
+        self.add_haz(7200, GROUND_Y - 300, 3600, 300, "shadow_clone_zone")
+        self.add_plat(11000, GROUND_Y, 4000, 800)
+        for x in range(11400, 14700, 420):
+            self.add_haz(x, GROUND_Y - 190, 55, 190, "illusion_wall")
+            self.add_haz(x + 200, GROUND_Y - 40, 45, 40, "shattered_mirror")
+        self.add_plat(15000, GROUND_Y, 4000, 800)
+        for x in range(15500, 18500, 900):
+            self.add_haz(x, GROUND_Y - 130, 65, 130, "mirror_portal", target_x=x + 350)
+        self.add_plat(19000, GROUND_Y, 4000, 800)
+        for x in range(19400, 22700, 550):
+            self.add_haz(x, GROUND_Y - 110, 40, 110, "reflection_panel", last_shot=0)
+        self.add_haz(23000, GROUND_Y + 80, 4000, 800, "void")
+        for i, x in enumerate(range(23100, 26850, 340)):
+            self.add_haz(x, GROUND_Y - 25, 170, 26, "synchronized_platform", phase=i)
+        self.add_plat(27000, GROUND_Y, 4000, 800)
+        for x in range(27300, 30800, 320):
+            self.add_haz(x, GROUND_Y - 120, 55, 120, "shattered_mirror")
+        self.add_plat(31000, GROUND_Y, 4000, 800)
+
+    def build_stage11(self):
+        self.add_plat(0, GROUND_Y, 4000, 800)
+        for x in range(550, 3800, 520):
+            self.add_haz(x, GROUND_Y - 160, 85, 160, "shadow_pillar")
+            self.add_haz(x + 240, GROUND_Y - 75, 90, 90, "meat_grinder", span=180, phase=x)
+        self.add_plat(4000, GROUND_Y + 35, 4500, 800)
+        self.add_haz(4100, GROUND_Y + 5, 4300, 50, "boiling_blood")
+        for i, x in enumerate(range(4150, 8350, 360)):
+            self.add_plat(x, GROUND_Y - 50 - (i % 2) * 45, 175, 24)
+            self.add_haz(x + 90, GROUND_Y - 130, 80, 80, "meat_grinder", span=120, phase=i * 0.9)
+        self.add_plat(8500, GROUND_Y, 4500, 800)
+        for i, x in enumerate(range(8800, 12800, 310)):
+            self.add_haz(x, GROUND_Y - 340, 95, 260, "guillotine_blade", phase=i * 420)
+            if i % 2 == 0:
+                self.add_haz(x + 150, GROUND_Y - 160, 80, 160, "shadow_pillar")
+        self.add_haz(13000, GROUND_Y + 80, 5000, 800, "void")
+        for x in range(13050, 17900, 220):
+            self.add_haz(x, GROUND_Y, 170, 26, "collapsing_floor", delay=210)
+            if x % 660 == 0:
+                self.add_haz(x + 40, GROUND_Y - 160, 75, 160, "shadow_pillar")
+        self.add_plat(18000, GROUND_Y, 6000, 800)
+        for x in range(18400, 23700, 440):
+            self.add_haz(x, GROUND_Y - 160, 85, 160, "shadow_pillar")
+            self.add_haz(x + 210, GROUND_Y - 80, 95, 95, "meat_grinder", span=160, phase=x)
+        cx, cy = 24000, GROUND_Y
+        for i in range(10):
+            cy -= 40
+            self.add_plat(cx, cy, 280, GROUND_Y - cy + 800)
+            self.add_haz(cx + 90, cy - 80, 80, 80, "meat_grinder", span=90, phase=i)
+            cx += 280
+        self.add_plat(26800, GROUND_Y, 4200, 800)
+        for x in range(27000, 30800, 350):
+            self.add_haz(x, GROUND_Y - 340, 95, 260, "guillotine_blade", phase=x)
+        self.add_plat(31000, GROUND_Y, 4000, 800)
+
+    def build_stage12(self):
+        self.add_plat(0, GROUND_Y, 800, 800)
+        self.add_haz(800, GROUND_Y + 80, 3700, 800, "void")
+        for i, x in enumerate(range(850, 4400, 250)):
+            self.add_haz(x, GROUND_Y - (i % 2) * 45, 165, 26, "phantom_plat", phase=i * 600)
+            if i % 3 == 0:
+                self.add_haz(x + 90, GROUND_Y - 150, 65, 130, "reality_tear")
+        self.add_plat(4500, GROUND_Y, 4500, 800)
+        for i, x in enumerate(range(4800, 8800, 320)):
+            self.add_haz(x, GROUND_Y - 140, 60, 140, "abyss_tendril", phase=i * 400)
+            self.add_haz(x + 150, GROUND_Y - 420, 35, 55, "corrupted_rain")
+        self.add_plat(9000, GROUND_Y, 5000, 800)
+        self.add_haz(9200, GROUND_Y - 320, 4600, 320, "insanity_pulse")
+        for x in range(9400, 13700, 380):
+            self.add_haz(x, GROUND_Y - 150, 65, 130, "reality_tear")
+            self.add_haz(x + 190, GROUND_Y - 140, 60, 140, "abyss_tendril", phase=x)
+        self.add_haz(14000, GROUND_Y + 80, 7500, 800, "void")
+        for i, x in enumerate(range(14050, 21400, 240)):
+            self.add_haz(x, GROUND_Y - (i % 3) * 40, 160, 26, "phantom_plat", phase=i * 500)
+            if i % 4 == 0:
+                self.add_haz(x + 60, GROUND_Y - 220, 80, 220, "cross_laser", phase=i * 450)
+        self.add_plat(21500, GROUND_Y, 600, 800)
+        self.add_haz(22100, GROUND_Y + 80, 4900, 800, "void")
+        for x in range(22100, 26950, 190):
+            self.add_haz(x, GROUND_Y, 175, 28, "collapsing_floor", delay=170)
+        self.add_plat(27000, GROUND_Y, 4500, 800)
+        for i, x in enumerate(range(27300, 31200, 300)):
+            self.add_haz(x, GROUND_Y - 140, 60, 140, "abyss_tendril", phase=i * 350)
+            self.add_haz(x + 140, GROUND_Y - 340, 90, 260, "guillotine_blade", phase=i * 500)
+        self.add_plat(31500, GROUND_Y, 3500, 800)
+
+    def get_valid_x(self, x, y, width, height, vel_x):
+        test_rect = pygame.Rect(int(x), int(y + 10), int(width), int(height - 20))
+        hit_wall = False
+        min_x = x - 120
+        max_x = x + width + 120
+        for p in self.platforms:
+            if p.right < min_x or p.left > max_x:
+                continue
+            if p.width <= 0 or p in self.bridge_rects or p in self.dynamic_plat_rects:
+                continue
+            if test_rect.colliderect(p):
+                hit_wall = True
+                if vel_x > 0: x = p.left - width
+                elif vel_x < 0: x = p.right
+        return x, hit_wall
+
+    def get_ground_y(self, x, object_width, object_height, entity_y):
+        center_x = x + (object_width / 2)
+        feet_y = entity_y + object_height
+        ground_y = GROUND_Y + 2000
+
+        for p in self.platforms:
+            if p.width <= 0 or p.right < center_x or p.left > center_x:
+                continue
+            if feet_y <= p.top + 44:
+                if p.top < ground_y:
+                    ground_y = p.top
+        return ground_y
+
+    def check_hazards(self, player):
+        player_rect = player.get_hitbox() if hasattr(player, "get_hitbox") else pygame.Rect(int(player.x), int(player.y), int(player.width), int(player.height))
+        shielded = getattr(player, "shield_timer", 0) > 0
+        pre_hazard_health = player.health
+        now = pygame.time.get_ticks()
+
+        if self.screen_shake > 0: self.screen_shake -= 1
+        if self.blizzard_timer > 0:
+            self.blizzard_timer -= 1
+            if abs(player.vel_x) > 0: player.x += 3 * player.facing
+        if self.glitch_timer > 0: self.glitch_timer -= 1
+        if self.fake_crash_timer > 0: self.fake_crash_timer -= 1
+
+        if self.stage == 7 and not player.on_ground:
+            player.vel_y -= 0.32
+
+        if self.stage == 10:
+            self.mirror_history.append((player.x, player.y))
+            if len(self.mirror_history) > 60:
+                self.mirror_history.pop(0)
+
+        if not self.surprise_triggered:
+            if self.stage == 1 and player.x >= 17500:
+                self.surprise_triggered = True
+                self.projectiles.append({"type": "ghost_arrow", "x": player.x + 650, "y": player.y + 25, "vx": -6.5, "vy": 0, "w": 65, "h": 14, "dmg": 20})
+            elif self.stage == 2 and player.x >= 20000:
+                self.surprise_triggered = True; self.screen_shake = 45
+                for h in self.hazards:
+                    if h.get("surprise_group"): h["triggered"] = True; h["trigger_time"] = now - 500
+            elif self.stage == 3 and player.x >= 17000:
+                self.surprise_triggered = True; self.screen_shake = 30
+                for idx, h in enumerate(self.hazards):
+                    if h.get("chain"): h["triggered"] = True; h["trigger_time"] = now + idx * 90
+            elif self.stage == 4 and player.x >= 11000:
+                self.surprise_triggered = True; self.screen_shake = 75
+                for i in range(6):
+                    self.projectiles.append({"type": "eruption_rock", "x": player.x - 150 + i * 165, "y": player.y - 480 - (i % 2) * 80, "vx": 0, "vy": 7.5, "w": 50, "h": 50, "dmg": 20})
+            elif self.stage == 5 and player.x >= 15000:
+                self.surprise_triggered = True; self.blizzard_timer = 180
+            elif self.stage == 6 and player.x >= 17500:
+                self.surprise_triggered = True; self.surprise_timer = now
+            elif self.stage == 7 and player.x >= 20000:
+                self.surprise_triggered = True; self.surprise_timer = now; self.screen_shake = 90
+            elif self.stage == 8 and player.x >= 28000:
+                self.surprise_triggered = True; self.surprise_timer = now; self.screen_shake = 100
+                self.projectiles.append({"type": "shockwave", "x": player.x + 700, "y": GROUND_Y - 55, "vx": -9.5, "vy": 0, "w": 55, "h": 55, "dmg": 25})
+                self.projectiles.append({"type": "shockwave", "x": player.x + 1150, "y": GROUND_Y - 55, "vx": -9.5, "vy": 0, "w": 55, "h": 55, "dmg": 25})
+            elif self.stage == 9 and player.x >= 17500:
+                self.surprise_triggered = True; self.surprise_timer = now
+            elif self.stage == 10 and player.x >= 17500:
+                self.surprise_triggered = True
+                self.projectiles.append({"type": "mirror_leap", "x": player.x + 550, "y": player.y - 120, "vx": -10, "vy": 3.5, "w": 55, "h": 95, "dmg": 30})
+            elif self.stage == 11 and player.x >= 18000:
+                self.surprise_triggered = True; self.surprise_timer = now; self.screen_shake = 120
+                for i in range(8):
+                    self.projectiles.append({"type": "blood_saw", "x": player.x + 500 + i * 240, "y": GROUND_Y - 65, "vx": -11.5, "vy": 0, "w": 65, "h": 65, "dmg": 22})
+            elif self.stage == 12 and player.x >= 22000:
+                self.surprise_triggered = True; self.surprise_timer = now; self.fake_crash_timer = 55; self.screen_shake = 150
+                self.projectiles.append({"type": "void_wall", "x": player.x - 450, "y": GROUND_Y - 400, "vx": 9.2, "vy": 0, "w": 120, "h": 500, "dmg": 999})
+
+        if self.surprise_triggered and self.surprise_timer > 0:
+            el = now - self.surprise_timer
+            if self.stage == 6:
+                if el < 2000: self.factory_state = "paused"
+                elif el < 6000: self.factory_state = "reversed"
+                else: self.factory_state = "normal"; self.surprise_timer = 0
+            elif self.stage == 7 and el < 5000:
+                player.x -= 4.8
+            elif self.stage == 9 and el < 4000:
+                player.vel_y -= 0.55
+
+        for p in self.projectiles[:]:
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+            if p["type"] == "mirror_leap" and p["y"] >= GROUND_Y - p["h"]:
+                p["y"] = GROUND_Y - p["h"]; p["vy"] = -9
+            p_rect = pygame.Rect(int(p["x"]), int(p["y"]), p["w"], p["h"])
+            if p_rect.colliderect(player_rect):
+                player.health -= p["dmg"]
+                player.vel_y = -7
+                if p["type"] != "void_wall":
+                    self.projectiles.remove(p)
+            elif abs(p["x"] - player.x) > 2200 or p["y"] > GROUND_Y + 500:
+                self.projectiles.remove(p)
+
+        in_shadow = False
+        self.eye_open = (now % 4200) > 2900 or (self.stage == 11 and self.surprise_triggered and now - self.surprise_timer < 5000)
+
+        mult = 0 if self.factory_state == "paused" else (-1 if self.factory_state == "reversed" else 1)
+        active_min_x = player.x - 1000
+        active_max_x = player.x + 1500
+
+        for h in self.hazards:
+            htype = h["type"]
+            rect = h["rect"]
+            must_keep_updating = (
+                h.get("triggered", False)
+                or h.get("fallen", False)
+                or htype == "lantern"
+            )
+            if not must_keep_updating:
+                ref_left = min(rect.left, h["base_x"] - 850)
+                ref_right = max(rect.right, h["base_x"] + rect.w + 450)
+                if ref_right < active_min_x or ref_left > active_max_x:
+                    continue
+
+            if htype in ["trap_bridge", "stone_bridge", "lava_bridge", "ice_bridge", "fragile_plat", "collapsing_floor", "trap_door", "cracking_ice", "giant_spine"]:
+                delay = h.get("delay", 1400)
+                if htype == "fragile_plat": delay = 220
+                elif htype == "trap_door": delay = 350
+                trigger_box = pygame.Rect(rect.x, rect.y - 8, rect.w, rect.h + 12)
+                if not h["fallen"] and player_rect.colliderect(trigger_box):
+                    if not h["triggered"]: h["triggered"] = True; h["trigger_time"] = now
+                if h["triggered"] and not h["fallen"] and now - h["trigger_time"] >= delay:
+                    h["fallen"] = True; h["plat_rect"].width = 0
+                elif h["fallen"] and now - h["trigger_time"] >= delay + h.get("regen", 4500):
+                    h["fallen"] = False; h["triggered"] = False; h["plat_rect"].width = rect.width
+            elif htype == "conveyor_belt":
+                if player_rect.colliderect(pygame.Rect(rect.x, rect.y - 8, rect.w, rect.h + 10)):
+                    player.x += h.get("speed", 4.0) * mult
+            elif htype == "giant_gears":
+                if player_rect.colliderect(rect):
+                    player.health -= 2.5; player.vel_y = -9; player.on_ground = False
+            elif htype in ["crusher_press", "sliding_gate", "flood_gate", "airlock_door", "guillotine_blade"]:
+                if mult != 0:
+                    cycle = (now + h.get("phase", 0)) % 2200
+                    down = cycle < 650
+                    rect.y = h["base_y"] + (95 if down else 0)
+                    if "plat_rect" in h: h["plat_rect"].y = rect.y
+                if player_rect.colliderect(rect):
+                    player.health -= 3.5; player.vel_y = -8
+            elif htype in ["moving_platform", "shipwreck_debris", "synchronized_platform"]:
+                if mult != 0:
+                    dx = int(math.sin(now * 0.003 * mult + h.get("phase", 0)) * h.get("span", 140))
+                    if htype == "synchronized_platform":
+                        dx = int(-player.vel_x * 12)
+                    rect.x = h["base_x"] + dx
+                    h["plat_rect"].x = rect.x
+            elif htype == "swing_arm":
+                ang = math.sin(now * 0.004 * mult + h.get("phase", 0)) * 75
+                rect.x = int(h["base_x"] + ang)
+                if player_rect.colliderect(rect):
+                    player.health -= 2.2; player.vel_x = -12
+            elif htype == "pressure_pipe":
+                if ((now + h.get("phase", 0)) % 2000) < 600:
+                    gust = pygame.Rect(rect.x - 160, rect.y, 160, rect.h)
+                    if player_rect.colliderect(gust): player.x += h.get("push", -8.0) * mult
+            elif htype == "water_current":
+                if player_rect.colliderect(rect):
+                    player.x += h.get("vx", -2.5)
+                    player.y += h.get("vy", 0)
+            elif htype == "sea_plant":
+                if abs(player.x - rect.x) < 95 and player_rect.colliderect(rect):
+                    player.health -= 2.0; player.vel_y = -4
+            elif htype == "whirlpool":
+                if player_rect.colliderect(rect):
+                    cx = rect.x + rect.w // 2
+                    player.x += 3.0 if player.x < cx else -3.0
+                    player.y += 2.0; player.health -= 0.4
+            elif htype == "predator_fish":
+                if abs(player.x - rect.x) < 550:
+                    rect.x -= 9.5
+                    if rect.x < h["base_x"] - 800: rect.x = h["base_x"]
+                if player_rect.colliderect(rect): player.health -= 14; rect.x = h["base_x"]
+            elif htype == "pressure_bubble":
+                if not h["triggered"] and player_rect.colliderect(rect):
+                    h["triggered"] = True; h["trigger_time"] = now
+                    player.vel_y = -13; player.health -= 8
+                elif h["triggered"] and now - h["trigger_time"] > 3000:
+                    h["triggered"] = False
+            elif htype == "air_pocket":
+                if player_rect.colliderect(rect):
+                    player.health = min(100, player.health + 0.35)
+            elif htype == "rolling_skull":
+                rect.x += h.get("vx", -6.5)
+                if rect.x < h["base_x"] - 700: rect.x = h["base_x"] + 200
+                if player_rect.colliderect(rect): player.health -= 12; player.vel_y = -7
+            elif htype in ["giant_ribs", "colossus_foot", "stone_hand"]:
+                if htype == "colossus_foot":
+                    cycle = (now + h.get("phase", 0)) % 2800
+                    rect.y = h["base_y"] if cycle > 800 else GROUND_Y - 120
+                if player_rect.colliderect(rect):
+                    player.health -= 2.5; player.vel_y = -8
+            elif htype in ["stone_eye", "dart_statue", "reflection_panel"]:
+                if abs(player.x - rect.x) < 700 and now - h.get("last_shot", 0) > 2100:
+                    h["last_shot"] = now
+                    dir_x = -1 if player.x < rect.x else 1
+                    self.projectiles.append({"type": "poison_dart", "x": rect.x, "y": rect.y + 35, "vx": 9.5 * dir_x, "vy": 0, "w": 32, "h": 10, "dmg": 12})
+            elif htype in ["moving_pillar", "vertebrae_column"]:
+                dy = int(math.sin(now * 0.003 + h.get("phase", 0)) * 105)
+                rect.y = h["base_y"] + dy; h["plat_rect"].y = rect.y
+            elif htype == "space_debris":
+                rect.x += h.get("vx", -6)
+                if rect.x < h["base_x"] - 800: rect.x = h["base_x"] + 200
+                if player_rect.colliderect(rect): player.health -= 12
+            elif htype == "zero_gravity":
+                if player_rect.colliderect(rect): player.vel_y -= 0.48
+            elif htype == "gravity_switch":
+                if player_rect.colliderect(rect):
+                    player.vel_y = -16; player.on_ground = False
+            elif htype in ["energy_wall", "cross_laser"]:
+                if ((now + h.get("phase", 0)) % 2000) < 900 and player_rect.colliderect(rect):
+                    player.health -= 2.5; player.vel_y = -6
+            elif htype == "magnetic_platform":
+                if abs(player.x - rect.x) < 220 and player.y < rect.y:
+                    player.y += 2.5
+            elif htype == "rotating_room":
+                open_state = ((now + h.get("phase", 0)) % 2600) < 1700
+                h["plat_rect"].width = rect.width if open_state else 0
+            elif htype == "inverted_corridor":
+                if player_rect.colliderect(rect):
+                    player.x -= player.vel_x * 2
+            elif htype == "illusion_wall":
+                near = abs(player.x - rect.x) < 110
+                h["plat_rect"].width = 0 if near else rect.width
+            elif htype == "mirror_portal":
+                if player_rect.colliderect(rect):
+                    player.x = h.get("target_x", player.x + 350)
+            elif htype == "shattered_mirror":
+                if abs(player.x - rect.x) < 120 and player_rect.colliderect(rect):
+                    player.health -= 2.0; player.vel_y = -7
+            elif htype == "shadow_pillar":
+                if player_rect.colliderect(pygame.Rect(rect.x - 20, rect.y, rect.w + 40, rect.h)):
+                    in_shadow = True
+            elif htype == "meat_grinder":
+                dx = int(math.sin(now * 0.006 + h.get("phase", 0)) * h.get("span", 150))
+                rect.x = h["base_x"] + dx
+                if player_rect.colliderect(rect):
+                    player.health -= 4.0; player.vel_y = -10; player.on_ground = False
+            elif htype == "boiling_blood":
+                if player_rect.colliderect(rect):
+                    player.health -= 3.5; player.vel_y = -9; player.on_ground = False
+            elif htype == "phantom_plat":
+                solid = ((now + h.get("phase", 0)) % 2400) < 1450
+                h["plat_rect"].width = rect.width if solid else 0
+                h["active"] = solid
+            elif htype == "reality_tear":
+                if player_rect.colliderect(rect):
+                    player.x = max(100, player.x - 550)
+                    player.health -= 18
+                    self.glitch_timer = 45
+            elif htype == "abyss_tendril":
+                active = ((now + h.get("phase", 0)) % 2000) < 950
+                h["active"] = active
+                if active and player_rect.colliderect(rect):
+                    player.y += 12; player.health -= 3.5
+            elif htype == "corrupted_rain":
+                rect.y += 12
+                if rect.y > GROUND_Y + 60: rect.y = h["base_y"]
+                if player_rect.colliderect(rect): player.health -= 14; rect.y = h["base_y"]
+            elif htype == "insanity_pulse":
+                if player_rect.colliderect(rect) and (now % 3000) < 900:
+                    player.x -= player.vel_x * 1.8
+                    self.glitch_timer = 15
+            elif htype in ["falling_branch", "ceiling_stalactite", "falling_meteor"]:
+                if not h["triggered"] and abs(player.x - rect.x) < 140:
+                    h["triggered"] = True; h["trigger_time"] = now
+                if h["triggered"] and not h["fallen"] and now - h["trigger_time"] >= 300:
+                    rect.y += 11
+                    if rect.colliderect(player_rect): player.health -= 15; h["fallen"] = True
+                    elif rect.y > GROUND_Y + 100: h["fallen"] = True
+                elif h["fallen"] and now - h["trigger_time"] > 4500:
+                    rect.y = h["base_y"]; h["triggered"] = False; h["fallen"] = False
+            elif htype in ["hidden_rock", "pressure_plate"]:
+                if not h["triggered"] and abs(player.x - rect.x) < 110:
+                    h["triggered"] = True; h["trigger_time"] = now
+                if h["triggered"]:
+                    el = now - h["trigger_time"]
+                    if 550 <= el <= 1400 and player_rect.colliderect(pygame.Rect(rect.x, GROUND_Y - 55, rect.w, 55)):
+                        player.health -= 1.8; player.vel_y = -6
+                    elif el > 2000: h["triggered"] = False
+            elif htype in ["glow_spike", "fake_tree", "ice_spikes"]:
+                if player_rect.colliderect(rect): h["triggered"] = True; player.health -= 2.0; player.vel_y = -6
+            elif htype == "line_bat":
+                rect.x += h.get("vx", -7)
+                if rect.x < h["base_x"] - 900: rect.x = h["base_x"] + 300
+                if player_rect.colliderect(rect): player.health -= 10
+            elif htype == "quicksand":
+                if player_rect.colliderect(rect): player.x -= 2.5 * player.facing; player.y += 1.5; player.health -= 0.15
+            elif htype == "lava":
+                if player_rect.colliderect(rect): player.health -= 3.0; player.vel_y = -11; player.on_ground = False
+            elif htype == "slippery_ice":
+                if player_rect.colliderect(pygame.Rect(rect.x, rect.y - 10, rect.w, rect.h + 15)): player.x += 2.8 * player.facing
+            elif htype == "wind_zone":
+                if player_rect.colliderect(rect): player.x += h.get("force", -3.0)
+            elif htype == "void":
+                if player_rect.colliderect(rect): player.health = 0
+
+        if self.stage == 11 and self.eye_open and not in_shadow and player.x < 31000:
+            player.health -= 0.45
+
+        if shielded:
+            if player.health < pre_hazard_health:
+                player.health = pre_hazard_health
+            if player.y > GROUND_Y + 40:
+                player.y = GROUND_Y - player.height
+                player.vel_y = -14
+                player.on_ground = False
+
+    def find_safe_respawn(self, death_x, player_w, player_h):
+        for offset in (0, -90, 90, -180, 180, -280, 280, -400, 400, -550, 550, -750, -950):
+            cand_x = max(120, min(self.stage_length - 400, int(death_x + offset)))
+            gy = self.get_ground_y(cand_x, player_w, player_h, GROUND_Y - player_h - 10)
+            if gy > GROUND_Y + 80:
+                continue
+            test_box = pygame.Rect(cand_x - 35, int(gy - player_h - 10), player_w + 70, player_h + 20)
+            danger = False
+            for h in self.hazards:
+                if h["type"] in ("void", "lava", "boiling_blood", "quicksand", "whirlpool", "ice_spikes", "giant_gears", "meat_grinder"):
+                    if test_box.colliderect(h["rect"]):
+                        danger = True
+                        break
+            if not danger:
+                return cand_x, int(gy - player_h)
+        return 300, GROUND_Y - player_h
+
+    def can_enter_gate(self, x):
+        return abs(x - self.gate_x) < 150
+
+    def draw(self, screen, camera_x, camera_y=0):
+        now = pygame.time.get_ticks()
+        shake_x = self.rng.randint(-7, 7) if (self.screen_shake > 0 or self.glitch_timer > 0) else 0
+        shake_y = self.rng.randint(-7, 7) if (self.screen_shake > 0 or self.glitch_timer > 0) else 0
+        cam_x = camera_x - shake_x
+        cam_y = camera_y - shake_y
+
+        themes = {
+            1: ((120, 195, 150), (95, 65, 35), (34, 145, 50)),
+            2: ((22, 24, 42), (55, 52, 70), (75, 70, 95)),
+            3: ((235, 195, 125), (185, 140, 75), (215, 175, 100)),
+            4: ((75, 20, 15), (50, 35, 35), (120, 45, 25)),
+            5: ((175, 210, 235), (140, 185, 220), (240, 250, 255)),
+            6: ((45, 52, 62), (75, 82, 95), (145, 155, 170)),
+            7: ((10, 45, 85), (25, 75, 110), (45, 135, 165)),
+            8: ((145, 125, 100), (105, 90, 75), (215, 205, 185)),
+            9: ((12, 10, 28), (45, 40, 80), (90, 210, 255)),
+            10: ((50, 35, 75), (95, 75, 135), (210, 190, 255)),
+            11: ((55, 5, 10), (85, 15, 20), (200, 25, 35)),
+            12: ((8, 5, 15), (28, 20, 42), (255, 0, 95))
+        }
+        sky_col, plat_col, top_col = themes.get(self.stage, themes[1])
+        screen.fill(sky_col)
+
+        if self.stage == 11:
+            eye_col = (255, 30, 30) if self.eye_open else (90, 20, 25)
+            pygame.draw.ellipse(screen, (180, 180, 180), (540, 45, 200, 90 if self.eye_open else 20))
+            if self.eye_open:
+                pygame.draw.circle(screen, eye_col, (640, 90), 36)
+                pygame.draw.circle(screen, (0, 0, 0), (640, 90), 14)
+
+        for p in self.platforms:
+            if p.width <= 0 or p in self.dynamic_plat_rects:
+                continue
+            r = pygame.Rect(int(p.x - cam_x), int(p.y - cam_y), p.width, p.height)
+            if r.right > 0 and r.left < 1280:
+                pygame.draw.rect(screen, plat_col, r)
+                pygame.draw.rect(screen, top_col, (r.x, r.y, r.width, min(18, r.height)))
+
+        for h in self.hazards:
+            htype = h["type"]
+            rect = h["rect"]
+            rx, ry = int(rect.x - cam_x), int(rect.y - cam_y)
+            if rx + rect.w < -150 or rx > 1430:
+                continue
+
+            if htype in ["trap_bridge", "stone_bridge", "lava_bridge", "ice_bridge", "fragile_plat", "collapsing_floor", "trap_door", "cracking_ice", "giant_spine"]:
+                if not h["fallen"]:
+                    pygame.draw.rect(screen, top_col, (rx, ry, rect.w, rect.h), border_radius=4)
+            elif htype == "conveyor_belt":
+                pygame.draw.rect(screen, (60, 65, 75), (rx, ry, rect.w, rect.h), border_radius=6)
+                pygame.draw.rect(screen, (255, 190, 40), (rx + 10, ry + 6, rect.w - 20, 6))
+            elif htype in ["giant_gears", "meat_grinder"]:
+                col = (220, 25, 40) if htype == "meat_grinder" else (160, 170, 185)
+                cx, cy = rx + rect.w // 2, ry + rect.h // 2
+                pygame.draw.circle(screen, col, (cx, cy), rect.w // 2)
+                pygame.draw.circle(screen, (30, 30, 35), (cx, cy), rect.w // 5)
+            elif htype in ["crusher_press", "sliding_gate", "flood_gate", "airlock_door", "guillotine_blade", "colossus_foot"]:
+                col = (200, 30, 30) if htype == "guillotine_blade" else (120, 130, 145)
+                pygame.draw.rect(screen, col, (rx, ry, rect.w, rect.h))
+                pygame.draw.rect(screen, (240, 240, 240), (rx, ry + rect.h - 14, rect.w, 14))
+            elif htype in ["moving_platform", "shipwreck_debris", "magnetic_platform", "rotating_room", "synchronized_platform", "moving_pillar", "vertebrae_column"]:
+                if "plat_rect" not in h or h["plat_rect"].width > 0:
+                    pygame.draw.rect(screen, top_col, (rx, ry, rect.w, rect.h), border_radius=5)
+            elif htype == "swing_arm":
+                pygame.draw.rect(screen, (180, 110, 40), (rx, ry, rect.w, rect.h), border_radius=8)
+            elif htype in ["water_current", "wind_zone", "zero_gravity", "inverted_corridor", "insanity_pulse"]:
+                s = pygame.Surface((min(rect.w, 1280), min(rect.h, 720)), pygame.SRCALPHA)
+                s.fill((120, 200, 255, 35) if htype != "insanity_pulse" else (255, 0, 80, 45))
+                screen.blit(s, (max(0, rx), max(0, ry)))
+            elif htype in ["sea_plant", "stone_hand", "giant_ribs", "abyss_tendril"]:
+                col = (20, 0, 35) if htype == "abyss_tendril" else (60, 160, 90)
+                if htype != "abyss_tendril" or h.get("active", True):
+                    pygame.draw.rect(screen, col, (rx, ry, rect.w, rect.h), border_radius=8)
+            elif htype in ["whirlpool", "quicksand", "lava", "boiling_blood"]:
+                col = (220, 10, 25) if htype == "boiling_blood" else ((255, 80, 0) if htype == "lava" else (40, 130, 200))
+                pygame.draw.rect(screen, col, (rx, ry, rect.w, rect.h))
+            elif htype in ["predator_fish", "line_bat", "rolling_skull", "space_debris", "pressure_bubble", "air_pocket"]:
+                col = (180, 245, 255) if htype == "air_pocket" else (230, 80, 70)
+                pygame.draw.ellipse(screen, col, (rx, ry, rect.w, rect.h))
+            elif htype == "shadow_pillar":
+                pygame.draw.rect(screen, (40, 10, 15), (rx, ry, rect.w, rect.h))
+                pygame.draw.rect(screen, (140, 30, 40), (rx, ry, rect.w, rect.h), 3)
+            elif htype == "phantom_plat":
+                col = (0, 255, 200) if h.get("active", True) else (80, 20, 60)
+                pygame.draw.rect(screen, col, (rx, ry, rect.w, rect.h), 0 if h.get("active", True) else 2)
+            elif htype in ["reality_tear", "mirror_portal"]:
+                pygame.draw.ellipse(screen, (190, 0, 255), (rx, ry, rect.w, rect.h), 4)
+            elif htype in ["energy_wall", "cross_laser"]:
+                if ((now + h.get("phase", 0)) % 2000) < 900:
+                    pygame.draw.rect(screen, (255, 40, 120), (rx, ry, rect.w, rect.h))
+            else:
+                pygame.draw.rect(screen, top_col, (rx, ry, rect.w, max(12, rect.h)))
+
+        if self.stage == 10 and len(self.mirror_history) > 30:
+            mx, my = self.mirror_history[0]
+            pygame.draw.rect(screen, (180, 120, 255), (int(mx - cam_x), int(my - cam_y), 50, 95), border_radius=8)
+
+        for p in self.projectiles:
+            px, py = int(p["x"] - cam_x), int(p["y"] - cam_y)
+            pygame.draw.rect(screen, (255, 60, 60), (px, py, p["w"], p["h"]), border_radius=6)
+
+        if self.fake_crash_timer > 0:
+            screen.fill((5, 0, 10))
+            if self._crash_font is None:
+                self._crash_font = pygame.font.SysFont("consolas", 42, bold=True)
+            txt = self._crash_font.render("CRITICAL REALITY FAILURE - VOID BREACH", True, (255, 20, 60))
+            screen.blit(txt, txt.get_rect(center=(640, 360)))
+
+        self.draw_gate(screen, cam_x, cam_y)
+
+    def draw_gate(self, screen, camera_x, camera_y):
+        x = int(self.gate_x - camera_x)
+        y = int(GROUND_Y - 170 - camera_y)
+        if -200 < x < 1480:
+            outer = pygame.Rect(x - 60, y, 120, 170)
+            pygame.draw.rect(screen, (50, 50, 65), outer, border_radius=15)
+            pygame.draw.rect(screen, (20, 20, 30), (x - 40, y + 40, 80, 130), border_radius=35)
+            pygame.draw.rect(screen, (255, 215, 0) if self.stage < 11 else (255, 20, 60), outer, width=6, border_radius=15)
