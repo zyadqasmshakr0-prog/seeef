@@ -12,7 +12,7 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Set up Java 17 (Required for Android SDK/Gradle)
+    - name: Set up Java 17
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
@@ -23,7 +23,7 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install System Dependencies (Including libltdl-dev & automake)
+    - name: Install System Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -50,9 +50,8 @@ jobs:
           libltdl-dev \
           pkg-config \
           zlib1g-dev \
-          libncurses5-dev \
-          libncursesw5-dev \
-          libtinfo5 \
+          libncurses-dev \
+          libtinfo6 \
           cmake \
           libffi-dev \
           libssl-dev \
@@ -61,6 +60,10 @@ jobs:
           libreadline-dev \
           libexpat1-dev \
           patch
+        # إنشاء رابط توافق في حال طلبت أدوات أندرويد libtinfo.so.5
+        if [ -f /lib/x86_64-linux-gnu/libtinfo.so.6 ] && [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
+          sudo ln -s /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
+        fi
 
     - name: Install Buildozer & Cython
       run: |
