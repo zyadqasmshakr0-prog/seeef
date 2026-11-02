@@ -19,7 +19,8 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Set up Python 3.11
+    # Python المضيف لتشغيل Buildozer
+    - name: Set up Host Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
@@ -61,11 +62,25 @@ jobs:
     - name: Install Buildozer & Compatible Python Tools
       run: |
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
-        python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
+        python -m pip install \
+          "cython==0.29.36" \
+          buildozer \
+          appdirs \
+          "colorama>=0.3.3" \
+          jinja2 \
+          "sh>=1.10,<2.0" \
+          build \
+          toml \
+          packaging
+
+    # حذف ملفات البناء القديمة فقط
+    - name: Clean Old Android Build
+      run: |
+        rm -rf .buildozer
+        rm -rf bin
 
     - name: Prepare Environment and Build APK
       run: |
-        # تنظيف كامل لأي متغيرات بيئة قد تؤثر على مترجم المضيف gcc
         unset ANDROID_HOME
         unset ANDROID_SDK_ROOT
         unset ANDROID_NDK
@@ -75,18 +90,27 @@ jobs:
         unset CFLAGS
         unset CPPFLAGS
 
-        # تشغيل البناء بنظافة تامة
         set +e
         yes | buildozer android debug 2>&1 | tee buildozer_full.log
+        BUILD_STATUS=${PIPESTATUS[1]}
         set -e
 
-        if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
+        if [ "$BUILD_STATUS" -ne 0 ] || \
+           [ ! -d "bin" ] || \
+           [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
+
           echo "==================== ACTUAL BUILD ERROR ===================="
-          grep -i -C 8 -E "error:|failed|exception|traceback" buildozer_full.log | tail -n 120 || tail -n 120 buildozer_full.log
+
+          grep -i -C 8 -E \
+            "error:|failed|exception|traceback" \
+            buildozer_full.log | tail -n 120 || \
+            tail -n 120 buildozer_full.log
+
           echo "============================================================"
           exit 1
         fi
 
+        echo "==================== APK BUILD SUCCESS ===================="
         ls -lh bin/*.apk
 
     - name: Upload Build Log (If Failed)
@@ -95,6 +119,7 @@ jobs:
       with:
         name: buildozer-error-log
         path: buildozer_full.log
+        if-no-files-found: ignore
 
     - name: Upload APK Artifact
       if: success()
