@@ -65,24 +65,21 @@ jobs:
 
     - name: Prepare Environment and Build APK
       run: |
-        # عزل متغيرات الـ NDK/SDK المسبقة في خادم GitHub لمنع تداخلها مع Buildozer
+        # تنظيف كامل لأي متغيرات بيئة قد تؤثر على مترجم المضيف gcc
         unset ANDROID_HOME
         unset ANDROID_SDK_ROOT
         unset ANDROID_NDK
         unset ANDROID_NDK_HOME
         unset ANDROID_NDK_ROOT
         unset ANDROID_NDK_LATEST_HOME
+        unset CFLAGS
+        unset CPPFLAGS
 
-        # تمرير رايات المترجم لتجاوز تحذيرات C الصارمة أثناء بناء Pygame
-        export CFLAGS="-Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
-        export CPPFLAGS="$CFLAGS"
-
-        # تشغيل البناء مع حفظ السجل الكامل
+        # تشغيل البناء بنظافة تامة
         set +e
         yes | buildozer android debug 2>&1 | tee buildozer_full.log
         set -e
 
-        # التحقق من نجاح إنتاج ملف الـ APK أو طباعة سبب الخطأ الفعلي
         if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
           echo "==================== ACTUAL BUILD ERROR ===================="
           grep -i -C 8 -E "error:|failed|exception|traceback" buildozer_full.log | tail -n 120 || tail -n 120 buildozer_full.log
