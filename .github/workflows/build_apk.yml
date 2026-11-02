@@ -6,18 +6,24 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+
+    - name: Set up Java 17 (Required for Android SDK/Gradle)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
-    - name: Install System Dependencies
+    - name: Install System Dependencies (Including libltdl-dev & automake)
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -30,36 +36,42 @@ jobs:
           libsdl2-image-dev \
           libsdl2-mixer-dev \
           libsdl2-ttf-dev \
+          libportmidi-dev \
+          libswscale-dev \
+          libavformat-dev \
+          libavcodec-dev \
           libunwind-dev \
           zip \
           unzip \
           autoconf \
+          automake \
           libtool \
+          libtool-bin \
+          libltdl-dev \
           pkg-config \
           zlib1g-dev \
           libncurses5-dev \
           libncursesw5-dev \
-          libreadline-dev \
-          libsqlite3-dev \
+          libtinfo5 \
+          cmake \
+          libffi-dev \
           libssl-dev \
+          libsqlite3-dev \
           libbz2-dev \
-          libexpat1-dev
+          libreadline-dev \
+          libexpat1-dev \
+          patch
 
     - name: Install Buildozer & Cython
       run: |
-        pip install --upgrade pip
+        pip install --upgrade pip "setuptools<70.0.0" wheel
         pip install "cython<3.0" buildozer
-
-    - name: Initialize Buildozer Config (if missing)
-      run: |
-        if [ ! -f "buildozer.spec" ]; then
-          buildozer init
-        fi
 
     - name: Build APK with Buildozer
       run: |
-        # قبول رخص أندرويد تلقائياً قبل تشغيل البناء
-        yes | buildozer -v android debug
+        yes | buildozer android debug || true
+        ls -la bin/
+        test -n "$(find bin -maxdepth 1 -name '*.apk' -print -quit)"
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
