@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,json,ttf,wav,ogg,mp3
 version = 1.0
 
-requirements = python3==3.11.6,hostpython3==3.11.6,pygame==2.1.3,sdl2,sdl2_image,sdl2_mixer,sdl2_ttf,png,jpeg,freetype
+requirements = python3,pygame
 
 orientation = landscape
 fullscreen = 1

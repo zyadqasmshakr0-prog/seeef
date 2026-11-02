@@ -3,10 +3,11 @@ name: Build Pygame Android APK
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout Repository
@@ -27,20 +28,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          python3-pip \
           build-essential \
           git \
-          python3-dev \
-          ffmpeg \
-          libsdl2-dev \
-          libsdl2-image-dev \
-          libsdl2-mixer-dev \
-          libsdl2-ttf-dev \
-          libportmidi-dev \
-          libswscale-dev \
-          libavformat-dev \
-          libavcodec-dev \
-          libunwind-dev \
           zip \
           unzip \
           autoconf \
@@ -50,8 +39,9 @@ jobs:
           libltdl-dev \
           pkg-config \
           zlib1g-dev \
-          libncurses-dev \
-          libtinfo6 \
+          libncurses5-dev \
+          libncursesw5-dev \
+          libtinfo5 \
           cmake \
           libffi-dev \
           libssl-dev \
@@ -59,25 +49,58 @@ jobs:
           libbz2-dev \
           libreadline-dev \
           libexpat1-dev \
-          patch
-        if [ -f /lib/x86_64-linux-gnu/libtinfo.so.6 ] && [ ! -f /lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
-          sudo ln -s /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5
+          libsdl2-dev \
+          libsdl2-image-dev \
+          libsdl2-mixer-dev \
+          libsdl2-ttf-dev \
+          libportmidi-dev \
+          ffmpeg \
+          patch \
+          lld
+
+    - name: Install Buildozer & Compatible Python Tools
+      run: |
+        python -m pip install --upgrade pip "setuptools<70.0.0" wheel
+        python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
+
+    - name: Prepare Environment and Build APK
+      run: |
+        # عزل متغيرات الـ NDK/SDK المسبقة في خادم GitHub لمنع تداخلها مع Buildozer
+        unset ANDROID_HOME
+        unset ANDROID_SDK_ROOT
+        unset ANDROID_NDK
+        unset ANDROID_NDK_HOME
+        unset ANDROID_NDK_ROOT
+        unset ANDROID_NDK_LATEST_HOME
+
+        # تمرير رايات المترجم لتجاوز تحذيرات C الصارمة أثناء بناء Pygame
+        export CFLAGS="-Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
+        export CPPFLAGS="$CFLAGS"
+
+        # تشغيل البناء مع حفظ السجل الكامل
+        set +e
+        yes | buildozer android debug 2>&1 | tee buildozer_full.log
+        set -e
+
+        # التحقق من نجاح إنتاج ملف الـ APK أو طباعة سبب الخطأ الفعلي
+        if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
+          echo "==================== ACTUAL BUILD ERROR ===================="
+          grep -i -C 8 -E "error:|failed|exception|traceback" buildozer_full.log | tail -n 120 || tail -n 120 buildozer_full.log
+          echo "============================================================"
+          exit 1
         fi
 
-    - name: Install Buildozer & Cython
-      run: |
-        pip install --upgrade pip "setuptools<70.0.0" wheel
-        pip install "cython==0.29.36" buildozer
+        ls -lh bin/*.apk
 
-    - name: Build APK with Buildozer
-      env:
-        CFLAGS: "-Wno-error=incompatible-function-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration"
-      run: |
-        yes | buildozer android debug || true
-        ls -la bin/
-        test -n "$(find bin -maxdepth 1 -name '*.apk' -print -quit)"
+    - name: Upload Build Log (If Failed)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: buildozer-error-log
+        path: buildozer_full.log
 
     - name: Upload APK Artifact
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: SEF-Adventurer-APK
