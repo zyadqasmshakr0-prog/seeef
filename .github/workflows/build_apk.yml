@@ -74,16 +74,12 @@ jobs:
         unset CFLAGS
         unset CPPFLAGS
 
-        # تسريع Git ومنع انقطاع التحميل
         git config --global http.postBuffer 524288000
         git config --global fetch.parallel 8
 
-        # مراقب خلفي ذكي:
-        # 1. ينسخ longintrepr.h وملفات cpython إلى مجلد Include الرئيسي فور ظهورها
-        # 2. يضيف رايات التسامح لمترجم NDK clang فقط (دون المساس بمترجم gcc الخاص بالنظام)
+        # مراقب خلفي ينسخ ملفات cpython/longintrepr.h ويعدل sdl2.c فور ظهورها
         (
           while true; do
-            # إصلاح longintrepr.h في كل مسارات بايثون المحتملة
             for inc_dir in $(find .buildozer -type d -name "cpython" 2>/dev/null); do
               parent_inc="$(dirname "$inc_dir")"
               if [ -f "$inc_dir/longintrepr.h" ] && [ ! -f "$parent_inc/longintrepr.h" ]; then
@@ -92,7 +88,6 @@ jobs:
               fi
             done
 
-            # تعديل مباشر لملف sdl2.c في pygame إذا تم فك ضغطه ليقرأ من cpython/longintrepr.h أو يتجاوز الخطأ
             for sdl_c in $(find .buildozer -name "sdl2.c" 2>/dev/null); do
               if grep -q '"longintrepr.h"' "$sdl_c" 2>/dev/null; then
                 sed -i 's|#include "longintrepr.h"|#include "cpython/longintrepr.h"|g' "$sdl_c" 2>/dev/null || true
