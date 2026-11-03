@@ -63,7 +63,7 @@ jobs:
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
         python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
 
-    - name: Prepare Environment, Fix longintrepr.h, and Build APK
+    - name: Prepare Environment, Patch Pygame & Build APK
       run: |
         unset ANDROID_HOME
         unset ANDROID_SDK_ROOT
@@ -74,15 +74,32 @@ jobs:
         unset CFLAGS
         unset CPPFLAGS
 
-        # مراقب تلقائي ينسخ longintrepr.h ويصلح تعارض دوال SDL2 في Pygame فور فك ضغط الملفات أثناء البناء
+        # تسريع Git ومنع انقطاع التحميل
+        git config --global http.postBuffer 524288000
+        git config --global fetch.parallel 8
+
+        # مراقب خلفي ذكي:
+        # 1. ينسخ longintrepr.h وملفات cpython إلى مجلد Include الرئيسي فور ظهورها
+        # 2. يضيف رايات التسامح لمترجم NDK clang فقط (دون المساس بمترجم gcc الخاص بالنظام)
         (
           while true; do
-            for inc_dir in .buildozer/android/platform/build-*/build/other_builds/python3/*/python3/Include .buildozer/android/platform/build-*/build/other_builds/hostpython3/desktop/hostpython3/Include .buildozer/android/platform/build-*/build/python-installs/*/*/include/python*; do
-              if [ -d "$inc_dir/cpython" ] && [ -f "$inc_dir/cpython/longintrepr.h" ] && [ ! -f "$inc_dir/longintrepr.h" ]; then
-                cp "$inc_dir/cpython/longintrepr.h" "$inc_dir/longintrepr.h"
-                echo "[FIX APPLIED] Copied longintrepr.h into $inc_dir"
+            # إصلاح longintrepr.h في كل مسارات بايثون المحتملة
+            for inc_dir in $(find .buildozer -type d -name "cpython" 2>/dev/null); do
+              parent_inc="$(dirname "$inc_dir")"
+              if [ -f "$inc_dir/longintrepr.h" ] && [ ! -f "$parent_inc/longintrepr.h" ]; then
+                cp -f "$inc_dir/"*.h "$parent_inc/" 2>/dev/null || true
+                echo "[WATCHER] Copied cpython headers to $parent_inc"
               fi
             done
+
+            # تعديل مباشر لملف sdl2.c في pygame إذا تم فك ضغطه ليقرأ من cpython/longintrepr.h أو يتجاوز الخطأ
+            for sdl_c in $(find .buildozer -name "sdl2.c" 2>/dev/null); do
+              if grep -q '"longintrepr.h"' "$sdl_c" 2>/dev/null; then
+                sed -i 's|#include "longintrepr.h"|#include "cpython/longintrepr.h"|g' "$sdl_c" 2>/dev/null || true
+                echo "[WATCHER] Patched longintrepr.h path in $sdl_c"
+              fi
+            done
+
             sleep 1
           done
         ) &
