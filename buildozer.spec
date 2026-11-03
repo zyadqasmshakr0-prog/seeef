@@ -6,8 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,json,ttf,wav,ogg,mp3
 version = 1.0
 
-# تثبيت Python على 3.10.12 لتجاوز مشكلة longintrepr.h
-requirements = python3==3.10.12,hostpython3==3.10.12,pygame
+requirements = python3,pygame
 
 orientation = landscape
 fullscreen = 1

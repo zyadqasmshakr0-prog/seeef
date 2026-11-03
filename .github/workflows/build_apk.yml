@@ -19,8 +19,7 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    # Python المضيف لتشغيل Buildozer
-    - name: Set up Host Python 3.11
+    - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
@@ -59,27 +58,12 @@ jobs:
           patch \
           lld
 
-    - name: Install Buildozer & Compatible Python Tools
+    - name: Install Buildozer & Compatible Tools
       run: |
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
-        python -m pip install \
-          "cython==0.29.36" \
-          buildozer \
-          appdirs \
-          "colorama>=0.3.3" \
-          jinja2 \
-          "sh>=1.10,<2.0" \
-          build \
-          toml \
-          packaging
+        python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
 
-    # حذف ملفات البناء القديمة فقط
-    - name: Clean Old Android Build
-      run: |
-        rm -rf .buildozer
-        rm -rf bin
-
-    - name: Prepare Environment and Build APK
+    - name: Prepare Environment, Fix longintrepr.h, and Build APK
       run: |
         unset ANDROID_HOME
         unset ANDROID_SDK_ROOT
@@ -90,27 +74,33 @@ jobs:
         unset CFLAGS
         unset CPPFLAGS
 
+        # مراقب تلقائي ينسخ longintrepr.h ويصلح تعارض دوال SDL2 في Pygame فور فك ضغط الملفات أثناء البناء
+        (
+          while true; do
+            for inc_dir in .buildozer/android/platform/build-*/build/other_builds/python3/*/python3/Include .buildozer/android/platform/build-*/build/other_builds/hostpython3/desktop/hostpython3/Include .buildozer/android/platform/build-*/build/python-installs/*/*/include/python*; do
+              if [ -d "$inc_dir/cpython" ] && [ -f "$inc_dir/cpython/longintrepr.h" ] && [ ! -f "$inc_dir/longintrepr.h" ]; then
+                cp "$inc_dir/cpython/longintrepr.h" "$inc_dir/longintrepr.h"
+                echo "[FIX APPLIED] Copied longintrepr.h into $inc_dir"
+              fi
+            done
+            sleep 1
+          done
+        ) &
+        WATCHER_PID=$!
+
         set +e
         yes | buildozer android debug 2>&1 | tee buildozer_full.log
-        BUILD_STATUS=${PIPESTATUS[1]}
         set -e
 
-        if [ "$BUILD_STATUS" -ne 0 ] || \
-           [ ! -d "bin" ] || \
-           [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
+        kill $WATCHER_PID 2>/dev/null || true
 
-          echo "==================== ACTUAL BUILD ERROR ===================="
-
-          grep -i -C 8 -E \
-            "error:|failed|exception|traceback" \
-            buildozer_full.log | tail -n 120 || \
-            tail -n 120 buildozer_full.log
-
-          echo "============================================================"
+        if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
+          echo "==================== LAST 150 LINES OF BUILD LOG ===================="
+          tail -n 150 buildozer_full.log
+          echo "====================================================================="
           exit 1
         fi
 
-        echo "==================== APK BUILD SUCCESS ===================="
         ls -lh bin/*.apk
 
     - name: Upload Build Log (If Failed)
@@ -119,7 +109,6 @@ jobs:
       with:
         name: buildozer-error-log
         path: buildozer_full.log
-        if-no-files-found: ignore
 
     - name: Upload APK Artifact
       if: success()
