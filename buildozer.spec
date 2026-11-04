@@ -1,13 +1,17 @@
 [app]
+
 title = SEF - The Adventurer
 package.name = sefadventurer
 package.domain = org.sef
+
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,json,ttf,wav,ogg,mp3
-source.exclude_dirs = tests,bin,.github
+source.exclude_dirs = tests,bin,.github,p4a-recipes
+
 version = 1.0
 
-requirements = python3,pygame
+# تثبيت Python وHost Python على الإصدار نفسه
+requirements = python3==3.10.12,hostpython3==3.10.12,pygame
 
 orientation = landscape
 fullscreen = 1
@@ -17,9 +21,13 @@ android.api = 33
 android.minapi = 21
 android.ndk = 25b
 android.accept_sdk_license = True
+
 p4a.bootstrap = sdl2
-p4a.branch = release-2024.01.21
+
+# استخدام إصدار رسمي محدد من python-for-android
+p4a.branch = v2024.01.21
 
 [buildozer]
+
 log_level = 2
 warn_on_root = 0

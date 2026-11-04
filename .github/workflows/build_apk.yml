@@ -1,8 +1,10 @@
-name: Build Pygame Android APK
+name: Build SEF Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+
   workflow_dispatch:
 
 jobs:
@@ -10,23 +12,46 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
+    # --------------------------------------
+    # Checkout
+    # --------------------------------------
+
     - name: Checkout Repository
       uses: actions/checkout@v4
+
+    # --------------------------------------
+    # Java
+    # --------------------------------------
 
     - name: Set up Java 17
       uses: actions/setup-java@v4
       with:
-        distribution: 'temurin'
+        distribution: temurin
         java-version: '17'
 
-    - name: Set up Python 3.11
+    # --------------------------------------
+    # Python 3.10.12
+    # --------------------------------------
+
+    - name: Set up Python 3.10.12
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.10.12'
+
+    - name: Verify Python
+      run: |
+        python --version
+        python -c "import sys; print(sys.version)"
+
+    # --------------------------------------
+    # System dependencies
+    # --------------------------------------
 
     - name: Install System Dependencies
       run: |
         sudo apt-get update
+
         sudo apt-get install -y \
           build-essential \
           git \
@@ -58,86 +83,105 @@ jobs:
           patch \
           lld
 
-    - name: Install Buildozer & Compatible Python Tools
+    # --------------------------------------
+    # Buildozer tools
+    # --------------------------------------
+
+    - name: Install Buildozer
       run: |
-        python -m pip install --upgrade pip "setuptools<70.0.0" wheel
-        python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
+        python -m pip install --upgrade \
+          pip \
+          "setuptools<70.0.0" \
+          wheel
 
-    - name: Prepare Official p4a and Inject 3-Line Header Fix into Official Pygame Recipe
+        python -m pip install \
+          "cython==0.29.36" \
+          buildozer \
+          appdirs \
+          "colorama>=0.3.3" \
+          jinja2 \
+          "sh>=1.10,<2.0" \
+          build \
+          toml \
+          packaging
+
+    # --------------------------------------
+    # Verify configuration
+    # --------------------------------------
+
+    - name: Verify Build Configuration
       run: |
-        mkdir -p .buildozer/android/platform
-        git clone https://github.com/kivy/python-for-android.git .buildozer/android/platform/python-for-android
-        cd .buildozer/android/platform/python-for-android
-        # إنشاء فرع محلي حقيقي باسم release-2024.01.21 عند الوسم v2024.01.21 حتى لا يحذفه Buildozer أبداً
-        git checkout -b release-2024.01.21 v2024.01.21
-        cd -
+        echo "===== buildozer.spec ====="
+        cat buildozer.spec
 
-        # حقن مسار cpython ورايات Clang في نهاية الدالة الرسمية دون لمس أي سطر من الكود الأصلي
-        python3 - << 'EOF'
-        p = ".buildozer/android/platform/python-for-android/pythonforandroid/recipes/pygame/__init__.py"
-        with open(p, "r", encoding="utf-8") as f:
-            code = f.read()
+        echo "===== Python requirements ====="
+        grep "^requirements" buildozer.spec
 
-        target = "return env"
-        replacement = """py_inc = join(self.ctx.get_python_install_dir(arch.arch), 'include', 'python3.11', 'cpython')
-        host_inc = join(self.get_recipe('hostpython3', self.ctx).get_build_dir(arch.arch), 'Include', 'cpython')
-        flags = f' -I{py_inc} -I{host_inc} -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-incompatible-pointer-types'
-        env['CFLAGS'] = env.get('CFLAGS', '') + flags
-        env['CPPFLAGS'] = env.get('CPPFLAGS', '') + flags
-        return env"""
+        echo "===== P4A branch ====="
+        grep "^p4a.branch" buildozer.spec
 
-        assert target in code, "Target 'return env' not found in official pygame recipe!"
-        code = code.replace(target, replacement, 1)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(code)
-        print("Successfully injected CFLAGS into official pygame recipe!")
-        EOF
+    # --------------------------------------
+    # Build APK
+    # --------------------------------------
 
-        # توثيق التعديل محلياً داخل git حتى يعتبره Buildozer نظيفاً تماماً
-        cd .buildozer/android/platform/python-for-android
-        git config user.email "builder@localhost"
-        git config user.name "Builder"
-        git commit -am "Inject cpython include path for Python 3.11"
-        git branch -vv
-        cd -
-
-    - name: Build APK with Buildozer
+    - name: Build Android APK
       run: |
-        unset ANDROID_HOME
-        unset ANDROID_SDK_ROOT
-        unset ANDROID_NDK
-        unset ANDROID_NDK_HOME
-        unset ANDROID_NDK_ROOT
-        unset ANDROID_NDK_LATEST_HOME
-        unset CFLAGS
-        unset CPPFLAGS
-
         set +e
+
         yes | buildozer android debug > buildozer_full.log 2>&1
+
+        build_status=${PIPESTATUS[1]}
+
         set -e
 
-        if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
-          echo "==================== ACTUAL FATAL ERRORS ===================="
-          grep -i -C 5 -E "fatal error:|error: command|Command failed|Exception|Traceback|FAILURE:" buildozer_full.log | tail -n 120 || true
-          echo "==================== LAST 120 LINES OF LOG ===================="
-          tail -n 120 buildozer_full.log
-          echo "==============================================================="
+        if [ "$build_status" -ne 0 ]; then
+          echo "Buildozer returned an error."
+        fi
+
+        if [ ! -d "bin" ] || \
+           [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
+
+          echo "=========================================="
+          echo "BUILD FAILED - IMPORTANT ERRORS"
+          echo "=========================================="
+
+          grep -i -C 5 -E \
+            "fatal error:|error: command|Command failed|Exception|Traceback|FAILURE:" \
+            buildozer_full.log | tail -n 150 || true
+
+          echo "=========================================="
+          echo "LAST 150 LOG LINES"
+          echo "=========================================="
+
+          tail -n 150 buildozer_full.log
+
           exit 1
         fi
 
         echo "APK Built Successfully!"
+
         ls -lh bin/*.apk
 
-    - name: Upload Build Log (If Failed)
+    # --------------------------------------
+    # Upload log on failure
+    # --------------------------------------
+
+    - name: Upload Build Log
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: buildozer-error-log
+        name: SEF-Build-Error-Log
         path: buildozer_full.log
+        if-no-files-found: ignore
 
-    - name: Upload APK Artifact
+    # --------------------------------------
+    # Upload APK
+    # --------------------------------------
+
+    - name: Upload APK
       if: success()
       uses: actions/upload-artifact@v4
       with:
         name: SEF-Adventurer-APK
         path: bin/*.apk
+        if-no-files-found: error
