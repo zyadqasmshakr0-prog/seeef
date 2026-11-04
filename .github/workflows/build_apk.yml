@@ -63,6 +63,44 @@ jobs:
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
         python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
 
+    - name: Prepare Official p4a and Inject 3-Line Header Fix into Official Pygame Recipe
+      run: |
+        mkdir -p .buildozer/android/platform
+        git clone https://github.com/kivy/python-for-android.git .buildozer/android/platform/python-for-android
+        cd .buildozer/android/platform/python-for-android
+        # إنشاء فرع محلي حقيقي باسم release-2024.01.21 عند الوسم v2024.01.21 حتى لا يحذفه Buildozer أبداً
+        git checkout -b release-2024.01.21 v2024.01.21
+        cd -
+
+        # حقن مسار cpython ورايات Clang في نهاية الدالة الرسمية دون لمس أي سطر من الكود الأصلي
+        python3 - << 'EOF'
+        p = ".buildozer/android/platform/python-for-android/pythonforandroid/recipes/pygame/__init__.py"
+        with open(p, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        target = "return env"
+        replacement = """py_inc = join(self.ctx.get_python_install_dir(arch.arch), 'include', 'python3.11', 'cpython')
+        host_inc = join(self.get_recipe('hostpython3', self.ctx).get_build_dir(arch.arch), 'Include', 'cpython')
+        flags = f' -I{py_inc} -I{host_inc} -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-incompatible-pointer-types'
+        env['CFLAGS'] = env.get('CFLAGS', '') + flags
+        env['CPPFLAGS'] = env.get('CPPFLAGS', '') + flags
+        return env"""
+
+        assert target in code, "Target 'return env' not found in official pygame recipe!"
+        code = code.replace(target, replacement, 1)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(code)
+        print("Successfully injected CFLAGS into official pygame recipe!")
+        EOF
+
+        # توثيق التعديل محلياً داخل git حتى يعتبره Buildozer نظيفاً تماماً
+        cd .buildozer/android/platform/python-for-android
+        git config user.email "builder@localhost"
+        git config user.name "Builder"
+        git commit -am "Inject cpython include path for Python 3.11"
+        git branch -vv
+        cd -
+
     - name: Build APK with Buildozer
       run: |
         unset ANDROID_HOME

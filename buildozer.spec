@@ -4,7 +4,7 @@ package.name = sefadventurer
 package.domain = org.sef
 source.dir = .
 source.include_exts = py,png,jpg,jpeg,json,ttf,wav,ogg,mp3
-source.exclude_dirs = tests,bin,.github,p4a-recipes
+source.exclude_dirs = tests,bin,.github
 version = 1.0
 
 requirements = python3,pygame
@@ -18,8 +18,7 @@ android.minapi = 21
 android.ndk = 25b
 android.accept_sdk_license = True
 p4a.bootstrap = sdl2
-p4a.branch = v2024.01.21
-p4a.local_recipes = ./p4a-recipes
+p4a.branch = release-2024.01.21
 
 [buildozer]
 log_level = 2
