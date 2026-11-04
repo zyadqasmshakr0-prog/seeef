@@ -58,12 +58,40 @@ jobs:
           patch \
           lld
 
-    - name: Install Buildozer & Compatible Tools
+    - name: Install Buildozer & Compatible Python Tools
       run: |
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
         python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
 
-    - name: Prepare Environment, Patch Pygame & Build APK
+    - name: Pre-clone p4a & Patch Pygame Recipe Deterministically
+      run: |
+        mkdir -p .buildozer/android/platform
+        git clone -b v2024.01.21 --single-branch https://github.com/kivy/python-for-android.git .buildozer/android/platform/python-for-android
+
+        python3 - << 'EOF'
+        recipe_path = ".buildozer/android/platform/python-for-android/pythonforandroid/recipes/pygame/__init__.py"
+        with open(recipe_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        patch_code = """
+                # استرجاع مسارات cpython الداخلية لـ Python 3.11 وتمرير رايات التسامح لمترجم NDK Clang فقط
+                cpython_inc = join(self.ctx.get_python_install_dir(arch.arch), "include", "python3.11", "cpython")
+                host_cpython_inc = join(self.get_recipe("hostpython3", self.ctx).get_build_dir(arch.arch), "Include", "cpython")
+                extra_flags = f" -I{cpython_inc} -I{host_cpython_inc} -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-incompatible-pointer-types"
+                env["CFLAGS"] = env.get("CFLAGS", "") + extra_flags
+                env["CPPFLAGS"] = env.get("CPPFLAGS", "") + extra_flags
+                return env
+        """
+        if "return env" in content:
+            content = content.replace("        return env", patch_code.strip("\n"))
+            with open(recipe_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print("Successfully patched pygame recipe!")
+        else:
+            raise RuntimeError("Could not find 'return env' in pygame recipe")
+        EOF
+
+    - name: Pre-accept Android SDK Licenses & Build APK
       run: |
         unset ANDROID_HOME
         unset ANDROID_SDK_ROOT
@@ -74,45 +102,26 @@ jobs:
         unset CFLAGS
         unset CPPFLAGS
 
-        git config --global http.postBuffer 524288000
-        git config --global fetch.parallel 8
-
-        # مراقب خلفي ينسخ ملفات cpython/longintrepr.h ويعدل sdl2.c فور ظهورها
-        (
-          while true; do
-            for inc_dir in $(find .buildozer -type d -name "cpython" 2>/dev/null); do
-              parent_inc="$(dirname "$inc_dir")"
-              if [ -f "$inc_dir/longintrepr.h" ] && [ ! -f "$parent_inc/longintrepr.h" ]; then
-                cp -f "$inc_dir/"*.h "$parent_inc/" 2>/dev/null || true
-                echo "[WATCHER] Copied cpython headers to $parent_inc"
-              fi
-            done
-
-            for sdl_c in $(find .buildozer -name "sdl2.c" 2>/dev/null); do
-              if grep -q '"longintrepr.h"' "$sdl_c" 2>/dev/null; then
-                sed -i 's|#include "longintrepr.h"|#include "cpython/longintrepr.h"|g' "$sdl_c" 2>/dev/null || true
-                echo "[WATCHER] Patched longintrepr.h path in $sdl_c"
-              fi
-            done
-
-            sleep 1
-          done
-        ) &
-        WATCHER_PID=$!
+        # وضع ملفات قبول رخص أندرويد القياسية مسبقاً لمنع توقف sdkmanager أو انقطاع yes |
+        mkdir -p "$HOME/.buildozer/android/platform/android-sdk/licenses"
+        printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license"
+        printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license"
 
         set +e
-        yes | buildozer android debug 2>&1 | tee buildozer_full.log
+        buildozer android debug > buildozer_full.log 2>&1
+        BUILD_EXIT=$?
         set -e
 
-        kill $WATCHER_PID 2>/dev/null || true
-
         if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
-          echo "==================== LAST 150 LINES OF BUILD LOG ===================="
-          tail -n 150 buildozer_full.log
-          echo "====================================================================="
+          echo "==================== ACTUAL FATAL ERRORS ===================="
+          grep -i -C 5 -E "fatal error:|error: command|Command failed|Exception|Traceback|FAILURE:" buildozer_full.log | tail -n 120 || true
+          echo "==================== LAST 120 LINES OF LOG ===================="
+          tail -n 120 buildozer_full.log
+          echo "==============================================================="
           exit 1
         fi
 
+        echo "APK Built Successfully!"
         ls -lh bin/*.apk
 
     - name: Upload Build Log (If Failed)
