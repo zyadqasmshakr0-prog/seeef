@@ -8,6 +8,7 @@ from world import World
 from enemies import Enemy
 from stage_layout import StageLayout
 from main_menu import MainMenu, load_settings
+from game_paths import asset_path
 
 pygame.init()
 
@@ -57,7 +58,7 @@ class PlayerAnimator:
                 img.blit(sheet, (0, 0), rect)
                 self.frames.append(img)
         except Exception as e:
-            pass
+            print(f"تعذر تحميل حركة الشخصية من {filepath}: {e}")
 
     def update(self):
         if not self.frames: return
@@ -102,7 +103,7 @@ class Player:
         self.state = "idle"
         self.crouching = False
         
-        sheet_path = "assets/adventurer-v1.5-Sheet.png"
+        sheet_path = asset_path("adventurer-v1.5-Sheet.png")
         self.animations = {
             "idle": PlayerAnimator(sheet_path, start_frame=0, frame_count=4, speed=0.1, loop=True),
             "run": PlayerAnimator(sheet_path, start_frame=8, frame_count=6, speed=0.2, loop=True),
@@ -451,7 +452,7 @@ PAUSE_AR_CACHE = {}
 
 def get_pause_ar_img(name):
     if name not in PAUSE_AR_CACHE:
-        p = os.path.join("F:/sef/assets/ui_ar", name)
+        p = asset_path("ui_ar", name)
         PAUSE_AR_CACHE[name] = pygame.image.load(p).convert_alpha() if os.path.exists(p) else None
     return PAUSE_AR_CACHE[name]
 

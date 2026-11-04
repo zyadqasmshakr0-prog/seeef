@@ -1,4 +1,4 @@
-﻿import pygame
+import pygame
 import sys
 import json
 import os
@@ -12,6 +12,7 @@ except ImportError:
     ARABIC_SUPPORT = False
 
 from control_editor import ControlEditor
+from game_paths import asset_path, bundled_settings_path, settings_path
 
 WHITE = (255, 255, 255)
 DARK_GRAY = (40, 45, 60)
@@ -21,7 +22,8 @@ GOLD = (240, 190, 40)
 BG_COLOR = (20, 25, 35)
 GREEN = (50, 180, 80)
 
-SETTINGS_FILE = "F:/sef/settings.json"
+SETTINGS_FILE = settings_path()
+BUNDLED_SETTINGS_FILE = bundled_settings_path()
 
 DEFAULT_SETTINGS = {
     "language": "ar",
@@ -64,6 +66,8 @@ def fix_text(text):
 
 def get_arabic_font(size):
     font_paths = [
+        asset_path("fonts", "NotoSansArabic-Regular.ttf"),
+        asset_path("fonts", "NotoSansArabic-Bold.ttf"),
         "C:/Windows/Fonts/tahoma.ttf",
         "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/segoeui.ttf"
@@ -79,9 +83,15 @@ def get_arabic_font(size):
 def load_settings():
     data = {}
 
-    if os.path.exists(SETTINGS_FILE):
+    settings_source = (
+        SETTINGS_FILE
+        if os.path.exists(SETTINGS_FILE)
+        else BUNDLED_SETTINGS_FILE
+    )
+
+    if os.path.exists(settings_source):
         try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
+            with open(settings_source, "r", encoding="utf-8-sig") as f:
                 loaded = json.load(f)
 
             if isinstance(loaded, dict):
@@ -196,11 +206,19 @@ class Button:
         surface.blit(text_surf, text_rect)
 
     def is_clicked(self, event):
-        return (
-            event.type == pygame.MOUSEBUTTONDOWN
-            and event.button == 1
-            and self.rect.collidepoint(event.pos)
-        )
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            return self.rect.collidepoint(event.pos)
+
+        # Android may deliver native touch events without mouse emulation.
+        if event.type == pygame.FINGERDOWN:
+            surface = pygame.display.get_surface()
+            if surface is None:
+                return False
+            width, height = surface.get_size()
+            pos = (int(event.x * width), int(event.y * height))
+            return self.rect.collidepoint(pos)
+
+        return False
 
 
 class MainMenu:

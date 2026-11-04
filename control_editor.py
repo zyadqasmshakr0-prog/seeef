@@ -1,4 +1,4 @@
-﻿
+
 import pygame
 import json
 import os
@@ -7,6 +7,7 @@ import math
 
 from world import World
 from stage_layout import StageLayout
+from game_paths import asset_path, settings_path
 
 # دعم تشكيل وعرض الحروف العربية
 try:
@@ -17,7 +18,7 @@ except ImportError:
     ARABIC_SUPPORT = False
 
 
-SETTINGS_FILE = "F:/sef/settings.json"
+SETTINGS_FILE = settings_path()
 
 WHITE = (255, 255, 255)
 GOLD = (240, 190, 40)
@@ -278,6 +279,8 @@ class ControlEditor:
     def create_font(self, size, bold=False):
         if self.is_arabic:
             font_paths = [
+                asset_path("fonts", "NotoSansArabic-Bold.ttf"),
+                asset_path("fonts", "NotoSansArabic-Regular.ttf"),
                 "C:/Windows/Fonts/tahoma.ttf",
                 "C:/Windows/Fonts/arial.ttf",
                 "C:/Windows/Fonts/segoeui.ttf"

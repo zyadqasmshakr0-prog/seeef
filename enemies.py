@@ -3,6 +3,8 @@ import math
 import time
 import os
 
+from game_paths import asset_path
+
 class SpriteSheetAnimator:
     def __init__(self, image_path, frame_count, speed=0.15):
         self.frames = []
@@ -24,8 +26,8 @@ class SpriteSheetAnimator:
                 image = pygame.Surface((self.frame_width, self.frame_height), pygame.SRCALPHA)
                 image.blit(self.sprite_sheet, (0, 0), rect)
                 self.frames.append(image)
-        except FileNotFoundError:
-            print(f"تنبيه: لم يتم العثور على صورة العدو: {image_path}")
+        except Exception as e:
+            print(f"تعذر تحميل صورة العدو {image_path}: {e}")
 
     def update(self):
         if not self.frames: return
@@ -97,10 +99,10 @@ class Enemy:
         # تحميل حركات الهيكل العظمي بناءً على الأرقام الدقيقة التي قمت بعدها!
         self.animations = {
             #"idle": SpriteSheetAnimator("assets/Skeleton Idle.png", frame_count=11, speed=0.15),
-            "walk": SpriteSheetAnimator("assets/Skeleton Walk.png", frame_count=13, speed=0.2),
-            "attack": SpriteSheetAnimator("assets/Skeleton Attack.png", frame_count=18, speed=0.25),
-            "hit": SpriteSheetAnimator("assets/Skeleton Hit.png", frame_count=8, speed=0.3),
-            "dead": SpriteSheetAnimator("assets/Skeleton Dead.png", frame_count=15, speed=0.15)
+            "walk": SpriteSheetAnimator(asset_path("Skeleton Walk.png"), frame_count=13, speed=0.2),
+            "attack": SpriteSheetAnimator(asset_path("Skeleton Attack.png"), frame_count=18, speed=0.25),
+            "hit": SpriteSheetAnimator(asset_path("Skeleton Hit.png"), frame_count=8, speed=0.3),
+            "dead": SpriteSheetAnimator(asset_path("Skeleton Dead.png"), frame_count=15, speed=0.15)
             
             # يمكنك إضافة حركة React مستقبلاً إذا أردت استخدامها لرد فعل العدو عند رؤيتك
             # "react": SpriteSheetAnimator("assets/Skeleton React.png", frame_count=4, speed=0.2)
