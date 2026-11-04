@@ -63,35 +63,7 @@ jobs:
         python -m pip install --upgrade pip "setuptools<70.0.0" wheel
         python -m pip install "cython==0.29.36" buildozer appdirs "colorama>=0.3.3" jinja2 "sh>=1.10,<2.0" build toml packaging
 
-    - name: Pre-clone p4a & Patch Pygame Recipe Deterministically
-      run: |
-        mkdir -p .buildozer/android/platform
-        git clone -b v2024.01.21 --single-branch https://github.com/kivy/python-for-android.git .buildozer/android/platform/python-for-android
-
-        python3 - << 'EOF'
-        recipe_path = ".buildozer/android/platform/python-for-android/pythonforandroid/recipes/pygame/__init__.py"
-        with open(recipe_path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        patch_code = """
-                # استرجاع مسارات cpython الداخلية لـ Python 3.11 وتمرير رايات التسامح لمترجم NDK Clang فقط
-                cpython_inc = join(self.ctx.get_python_install_dir(arch.arch), "include", "python3.11", "cpython")
-                host_cpython_inc = join(self.get_recipe("hostpython3", self.ctx).get_build_dir(arch.arch), "Include", "cpython")
-                extra_flags = f" -I{cpython_inc} -I{host_cpython_inc} -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-incompatible-pointer-types"
-                env["CFLAGS"] = env.get("CFLAGS", "") + extra_flags
-                env["CPPFLAGS"] = env.get("CPPFLAGS", "") + extra_flags
-                return env
-        """
-        if "return env" in content:
-            content = content.replace("        return env", patch_code.strip("\n"))
-            with open(recipe_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print("Successfully patched pygame recipe!")
-        else:
-            raise RuntimeError("Could not find 'return env' in pygame recipe")
-        EOF
-
-    - name: Pre-accept Android SDK Licenses & Build APK
+    - name: Build APK with Buildozer
       run: |
         unset ANDROID_HOME
         unset ANDROID_SDK_ROOT
@@ -102,14 +74,8 @@ jobs:
         unset CFLAGS
         unset CPPFLAGS
 
-        # وضع ملفات قبول رخص أندرويد القياسية مسبقاً لمنع توقف sdkmanager أو انقطاع yes |
-        mkdir -p "$HOME/.buildozer/android/platform/android-sdk/licenses"
-        printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license"
-        printf "\n84831b9409646a918e30573bab4c9c91346d8abd" > "$HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license"
-
         set +e
-        buildozer android debug > buildozer_full.log 2>&1
-        BUILD_EXIT=$?
+        yes | buildozer android debug > buildozer_full.log 2>&1
         set -e
 
         if [ ! -d "bin" ] || [ -z "$(find bin -maxdepth 1 -name '*.apk' -print -quit)" ]; then
