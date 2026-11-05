@@ -4,10 +4,13 @@ import json
 import os
 import copy
 import math
+import sys
 
 from world import World
 from stage_layout import StageLayout
 from game_paths import asset_path, settings_path
+
+IS_ANDROID = (sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ)
 
 # دعم تشكيل وعرض الحروف العربية
 try:
@@ -241,6 +244,7 @@ class ControlEditor:
 
         self.selected = "attack"
         self.dragging = None
+        self.active_editor_finger = None
         self.drag_offset = (0, 0)
         self.preview = False
         self.status_message = ""
@@ -1200,43 +1204,58 @@ class ControlEditor:
                     ):
                         self.redo()
 
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if not IS_ANDROID and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    self.active_editor_finger = None
                     result = self.start_pointer(event.pos)
 
                     if result == "back":
                         return
 
-                elif event.type == pygame.MOUSEMOTION:
+                elif not IS_ANDROID and event.type == pygame.MOUSEMOTION:
                     if self.dragging:
                         self.move_control(event.pos)
 
-                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                elif not IS_ANDROID and event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                     self.dragging = None
                     self.slider_dragging = False
 
                 elif event.type == pygame.FINGERDOWN:
-                    pos = (
-                        int(event.x * self.width),
-                        int(event.y * self.height)
-                    )
-
-                    result = self.start_pointer(pos)
-
-                    if result == "back":
-                        return
+                    # المحرر يتعامل مع إصبع سحب واحد في كل مرة حتى لا
+                    # يغيّر إصبع ثانٍ العنصر الجاري تحريكه بالخطأ.
+                    if self.active_editor_finger is None:
+                        self.active_editor_finger = (
+                            getattr(event, "touch_id", 0),
+                            getattr(event, "finger_id", 0),
+                        )
+                        pos = (
+                            max(0, min(self.width - 1, int(event.x * self.width))),
+                            max(0, min(self.height - 1, int(event.y * self.height)))
+                        )
+                        result = self.start_pointer(pos)
+                        if result == "back":
+                            return
 
                 elif event.type == pygame.FINGERMOTION:
-                    if self.dragging:
+                    pointer_id = (
+                        getattr(event, "touch_id", 0),
+                        getattr(event, "finger_id", 0),
+                    )
+                    if self.dragging and pointer_id == self.active_editor_finger:
                         pos = (
-                            int(event.x * self.width),
-                            int(event.y * self.height)
+                            max(0, min(self.width - 1, int(event.x * self.width))),
+                            max(0, min(self.height - 1, int(event.y * self.height)))
                         )
-
                         self.move_control(pos)
 
                 elif event.type == pygame.FINGERUP:
-                    self.dragging = None
-                    self.slider_dragging = False
+                    pointer_id = (
+                        getattr(event, "touch_id", 0),
+                        getattr(event, "finger_id", 0),
+                    )
+                    if pointer_id == self.active_editor_finger:
+                        self.active_editor_finger = None
+                        self.dragging = None
+                        self.slider_dragging = False
 
             pygame.display.flip()
             clock.tick(60)

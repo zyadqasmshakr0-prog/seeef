@@ -3,6 +3,7 @@ import sys
 import json
 import os
 import copy
+import sys
 
 try:
     import arabic_reshaper
@@ -24,6 +25,7 @@ GREEN = (50, 180, 80)
 
 SETTINGS_FILE = settings_path()
 BUNDLED_SETTINGS_FILE = bundled_settings_path()
+IS_ANDROID = (sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ)
 
 DEFAULT_SETTINGS = {
     "language": "ar",
@@ -206,7 +208,7 @@ class Button:
         surface.blit(text_surf, text_rect)
 
     def is_clicked(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        if not IS_ANDROID and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             return self.rect.collidepoint(event.pos)
 
         # Android may deliver native touch events without mouse emulation.

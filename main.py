@@ -10,13 +10,34 @@ from stage_layout import StageLayout
 from main_menu import MainMenu, load_settings
 from game_paths import asset_path
 
+IS_ANDROID = (sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ)
+
+# امنع SDL2 من تحويل اللمسة إلى نقرة ماوس اصطناعية؛ نعالج كل إصبع
+# من أحداث FINGER بشكل مستقل، وهذا ضروري للّمس المتعدد على Android.
+if IS_ANDROID:
+    os.environ["SDL_TOUCH_MOUSE_EVENTS"] = "0"
+    os.environ["SDL_MOUSE_TOUCH_EVENTS"] = "0"
+
 pygame.init()
 
+# مساحة لعب منطقية ثابتة حتى تبقى إحداثيات المراحل ومحرر الأزرار متوافقة.
+# على Android نطلب من SDL2 تحجيم هذه المساحة إلى دقة الشاشة الفعلية.
 WIDTH = 1280
 HEIGHT = 720
 FPS = 60
 
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+if IS_ANDROID:
+    try:
+        screen = pygame.display.set_mode(
+            (WIDTH, HEIGHT),
+            pygame.FULLSCREEN | pygame.SCALED
+        )
+    except (pygame.error, TypeError):
+        # توافق احتياطي لإصدارات SDL التي لا تدعم SCALED.
+        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+else:
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+
 pygame.display.set_caption("SEF - The Adventurer")
 clock = pygame.time.Clock()
 
@@ -625,11 +646,28 @@ enemies = create_stage_enemies(starting_stage, stage_layout)
 current_stage = starting_stage
 king_defeated = False
 
+# كل إصبع له معرّف مستقل. استخدام touch_id مع finger_id يمنع
+# تصادم المعرّفات عند وجود أكثر من مصدر لمس.
 touch_assignments = {}
 mouse_control = None
 
 joystick_fingers = {}
 joystick_mouse_pos = None
+
+
+def get_finger_key(event):
+    return (
+        getattr(event, "touch_id", 0),
+        getattr(event, "finger_id", 0),
+    )
+
+
+def get_finger_position(event):
+    # إحداثيات FINGER تكون نسبية إلى الشاشة، ونحوّلها إلى مساحة اللعب 1280x720.
+    return (
+        max(0, min(WIDTH - 1, int(event.x * WIDTH))),
+        max(0, min(HEIGHT - 1, int(event.y * HEIGHT))),
+    )
 joystick_jump_latched = False
 joystick_auto_jump = False
 paused = False
@@ -664,13 +702,13 @@ while running:
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_p):
                     paused = False
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            elif not IS_ANDROID and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if PAUSE_RESUME_RECT.collidepoint(event.pos) or PAUSE_BTN_RECT.collidepoint(event.pos):
                     paused = False
                 elif PAUSE_MENU_RECT.collidepoint(event.pos):
                     return_to_main_menu()
             elif event.type == pygame.FINGERDOWN:
-                fpos = (int(event.x * WIDTH), int(event.y * HEIGHT))
+                fpos = get_finger_position(event)
                 if PAUSE_RESUME_RECT.collidepoint(fpos) or PAUSE_BTN_RECT.collidepoint(fpos):
                     paused = False
                 elif PAUSE_MENU_RECT.collidepoint(fpos):
@@ -703,41 +741,47 @@ while running:
             if event.key == k_map["legendary"]: player.legendary_attack()
 
         if event.type == pygame.FINGERDOWN:
-            pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
+            pointer_id = get_finger_key(event)
+            pos = get_finger_position(event)
+
             if PAUSE_BTN_RECT.collidepoint(pos):
                 paused = True
                 continue
+
             if TOUCH_MODE == "joystick":
                 cx, cy = JOYSTICK_CENTER
                 if math.hypot(pos[0] - cx, pos[1] - cy) <= JOYSTICK_RADIUS * 1.45:
-                    joystick_fingers[event.finger_id] = pos
+                    joystick_fingers[pointer_id] = pos
                 else:
                     name = get_control_at(pos)
                     if name:
-                        touch_assignments[event.finger_id] = name
+                        touch_assignments[pointer_id] = name
                         activate_control(name)
             else:
                 name = get_control_at(pos)
                 if name:
-                    touch_assignments[event.finger_id] = name
+                    touch_assignments[pointer_id] = name
                     activate_control(name)
 
         elif event.type == pygame.FINGERMOTION:
-            pos = (int(event.x * WIDTH), int(event.y * HEIGHT))
-            if event.finger_id in joystick_fingers:
-                joystick_fingers[event.finger_id] = pos
-            elif event.finger_id in touch_assignments:
+            pointer_id = get_finger_key(event)
+            pos = get_finger_position(event)
+
+            if pointer_id in joystick_fingers:
+                joystick_fingers[pointer_id] = pos
+            elif pointer_id in touch_assignments:
                 name = get_control_at(pos)
                 if name:
-                    touch_assignments[event.finger_id] = name
+                    touch_assignments[pointer_id] = name
                 else:
-                    touch_assignments.pop(event.finger_id, None)
+                    touch_assignments.pop(pointer_id, None)
 
         elif event.type == pygame.FINGERUP:
-            joystick_fingers.pop(event.finger_id, None)
-            touch_assignments.pop(event.finger_id, None)
+            pointer_id = get_finger_key(event)
+            joystick_fingers.pop(pointer_id, None)
+            touch_assignments.pop(pointer_id, None)
 
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        elif not IS_ANDROID and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if PAUSE_BTN_RECT.collidepoint(event.pos):
                 paused = True
                 continue
@@ -755,13 +799,13 @@ while running:
                 if mouse_control:
                     activate_control(mouse_control)
 
-        elif event.type == pygame.MOUSEMOTION:
+        elif not IS_ANDROID and event.type == pygame.MOUSEMOTION:
             if joystick_mouse_pos is not None:
                 joystick_mouse_pos = event.pos
             elif mouse_control is not None and pygame.mouse.get_pressed()[0]:
                 mouse_control = get_control_at(event.pos)
 
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+        elif not IS_ANDROID and event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             mouse_control = None
             joystick_mouse_pos = None
 
