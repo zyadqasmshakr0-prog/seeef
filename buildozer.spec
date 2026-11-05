@@ -21,7 +21,7 @@ android.api = 33
 android.minapi = 21
 android.ndk = 25b
 android.accept_sdk_license = True
-
+android.ant_path = /usr/share/ant
 p4a.bootstrap = sdl2
 
 # استخدام إصدار رسمي محدد من python-for-android
