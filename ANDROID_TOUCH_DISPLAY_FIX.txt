@@ -1,0 +1,12 @@
+SEF Android touch and display update
+
+Included changes:
+- Android uses a 1280x720 logical game surface with SDL2 SCALED + FULLSCREEN so it is scaled to the device display while keeping the same game coordinates.
+- SDL touch-to-mouse emulation is disabled on Android; native FINGER events are handled directly.
+- Every touch is identified by (touch_id, finger_id), so two or more fingers can hold different controls at the same time.
+- Android mouse-emulation events are ignored to prevent one pointer from cancelling another.
+- The touch-control editor tracks the finger that started a drag, so another finger cannot interrupt or replace that drag.
+- Desktop keeps its original 1280x720 window behavior.
+- Existing settings, stages, assets, and control editor files are included. Do not delete the settings file or existing user data.
+
+Build: upload the included buildozer.spec and .github/workflows/build_apk.yml through the normal GitHub Actions workflow.

@@ -14,6 +14,11 @@ except ImportError:
 
 from control_editor import ControlEditor
 from game_paths import asset_path, bundled_settings_path, settings_path
+from progression import load_progress, save_progress
+from display_utils import present
+
+LOGICAL_WIDTH = 1280
+LOGICAL_HEIGHT = 720
 
 WHITE = (255, 255, 255)
 DARK_GRAY = (40, 45, 60)
@@ -213,11 +218,7 @@ class Button:
 
         # Android may deliver native touch events without mouse emulation.
         if event.type == pygame.FINGERDOWN:
-            surface = pygame.display.get_surface()
-            if surface is None:
-                return False
-            width, height = surface.get_size()
-            pos = (int(event.x * width), int(event.y * height))
+            pos = (int(event.x * LOGICAL_WIDTH), int(event.y * LOGICAL_HEIGHT))
             return self.rect.collidepoint(pos)
 
         return False
@@ -232,6 +233,7 @@ class MainMenu:
 
         self.settings = load_settings()
         self.state = "main"
+        self.progress = load_progress()
         self.selected_stage = 1
         self.waiting_for_key = None
 
@@ -272,6 +274,15 @@ class MainMenu:
             "",
             GREEN
         )
+
+        self.armory_buttons = {
+            "sword": Button(cx - 280, 175, 560, 55, ""),
+            "shield": Button(cx - 280, 245, 560, 55, ""),
+            "spear": Button(cx - 280, 315, 560, 55, ""),
+            "jump": Button(cx - 280, 385, 560, 55, ""),
+            "berserk": Button(cx - 280, 455, 560, 55, ""),
+        }
+        self.btn_armory_back = Button(50, h - 95, 220, 58, "")
 
         self.btn_prev = Button(
             cx - 160, 330, 60, 60, "<"
@@ -353,9 +364,10 @@ class MainMenu:
         self.btn_back.text = self.t("عودة", "Back")
 
         self.btn_play_stage.text = self.t(
-            "بدأ اللعبة",
+            "ابدأ اللعبة",
             "Play Game"
         )
+        self.btn_armory_back.text = self.t("عودة", "Back")
 
         self.btn_settings_back.text = self.t(
             "حفظ وعودة",
@@ -492,7 +504,8 @@ class MainMenu:
                         self.state = "stage_select"
 
                     elif self.btn_character.is_clicked(event):
-                        print(">> السلاح والشخصية - قريباً")
+                        self.progress = load_progress()
+                        self.state = "armory"
 
                     elif self.btn_settings.is_clicked(event):
                         self.state = "settings"
@@ -502,7 +515,9 @@ class MainMenu:
                         self.state = "main"
 
                     elif self.btn_play_stage.is_clicked(event):
-                        return self.selected_stage
+                        self.progress = load_progress()
+                        if self.selected_stage <= self.progress["unlocked_stage"]:
+                            return self.selected_stage
 
                     elif (
                         self.btn_prev.is_clicked(event)
@@ -515,6 +530,43 @@ class MainMenu:
                         and self.selected_stage < 12
                     ):
                         self.selected_stage += 1
+
+                elif self.state == "armory":
+                    if self.btn_armory_back.is_clicked(event):
+                        self.state = "main"
+                    else:
+                        costs = {
+                            "sword": 15 + self.progress["sword_level"] * 15,
+                            "shield": 25,
+                            "spear": 30,
+                            "jump": 40 + self.progress["extra_jump_level"] * 20,
+                            "berserk": 35 + self.progress["berserk_level"] * 25,
+                        }
+                        for skill, btn in self.armory_buttons.items():
+                            if btn.is_clicked(event):
+                                if skill == "shield" and self.progress["shield_unlocked"]:
+                                    break
+                                if skill == "spear" and self.progress["spear_unlocked"]:
+                                    break
+                                if skill == "jump" and self.progress["extra_jump_level"] >= 3:
+                                    break
+                                if skill == "berserk" and self.progress["berserk_level"] >= 3:
+                                    break
+                                cost = costs[skill]
+                                if self.progress["coins"] >= cost:
+                                    self.progress["coins"] -= cost
+                                    if skill == "sword":
+                                        self.progress["sword_level"] += 1
+                                    elif skill == "shield":
+                                        self.progress["shield_unlocked"] = True
+                                    elif skill == "spear":
+                                        self.progress["spear_unlocked"] = True
+                                    elif skill == "jump":
+                                        self.progress["extra_jump_level"] = min(3, self.progress["extra_jump_level"] + 1)
+                                    elif skill == "berserk":
+                                        self.progress["berserk_level"] = min(3, self.progress["berserk_level"] + 1)
+                                    save_progress(self.progress)
+                                break
 
                 elif self.state == "settings":
                     if self.btn_settings_back.is_clicked(event):
@@ -593,8 +645,9 @@ class MainMenu:
                     title.get_rect(center=(cx, 110))
                 )
 
+                self.progress = load_progress()
                 self.btn_prev.draw(self.screen, self.font)
-                self.btn_next.draw(self.screen, self.font)
+                self.btn_next.draw(self.screen, self.font, active=(self.selected_stage >= self.progress["unlocked_stage"]))
 
                 stg_lbl = fix_text(
                     self.t(
@@ -613,9 +666,45 @@ class MainMenu:
                     stage_text,
                     stage_text.get_rect(center=(cx, 360))
                 )
+                lock_txt = self.t(
+                    f"العملات: {self.progress['coins']}  |  مفتوح حتى: {self.progress['unlocked_stage']}",
+                    f"Coins: {self.progress['coins']}  |  Unlocked: {self.progress['unlocked_stage']}"
+                )
+                lock_surface = self.small_font.render(fix_text(lock_txt), True, GOLD)
+                self.screen.blit(lock_surface, lock_surface.get_rect(center=(cx, 430)))
+                if self.selected_stage > self.progress["unlocked_stage"]:
+                    locked = self.small_font.render(fix_text(self.t("هذه المرحلة مقفلة", "This stage is locked")), True, (255, 100, 100))
+                    self.screen.blit(locked, locked.get_rect(center=(cx, 475)))
 
                 self.btn_back.draw(self.screen, self.font)
-                self.btn_play_stage.draw(self.screen, self.font)
+                self.btn_play_stage.draw(self.screen, self.font, active=(self.selected_stage > self.progress["unlocked_stage"]))
+
+            elif self.state == "armory":
+                self.progress = load_progress()
+                title_txt = fix_text(self.t("ترسانة البطل والمهارات", "Hero Armory & Skills"))
+                title = self.title_font.render(title_txt, True, GOLD)
+                self.screen.blit(title, title.get_rect(center=(cx, 85)))
+                coin_txt = self.t(f"رصيدك: {self.progress['coins']} عملة", f"Balance: {self.progress['coins']} coins")
+                coin_surface = self.font.render(fix_text(coin_txt), True, GOLD)
+                self.screen.blit(coin_surface, coin_surface.get_rect(center=(cx, 135)))
+                costs = {
+                    "sword": 15 + self.progress["sword_level"] * 15,
+                    "shield": 25,
+                    "spear": 30,
+                    "jump": 40 + self.progress["extra_jump_level"] * 20,
+                    "berserk": 35 + self.progress["berserk_level"] * 25,
+                }
+                labels = {
+                    "sword": self.t(f"تطوير قوة السيف - المستوى {self.progress['sword_level']} | {costs['sword']} عملة", f"Sword damage level {self.progress['sword_level']} | {costs['sword']} coins"),
+                    "shield": self.t("درع لمدة 60 ثانية - تم الفتح" if self.progress['shield_unlocked'] else f"فتح الدرع لمدة 60 ثانية | {costs['shield']} عملة", "60-second shield - unlocked" if self.progress['shield_unlocked'] else f"Unlock 60-second shield | {costs['shield']} coins"),
+                    "spear": self.t("رمي الرمح - تم الفتح" if self.progress['spear_unlocked'] else f"فتح مهارة رمي الرمح | {costs['spear']} عملة", "Spear throw - unlocked" if self.progress['spear_unlocked'] else f"Unlock spear throw | {costs['spear']} coins"),
+                    "jump": self.t(f"قفزة إضافية - المستوى {self.progress['extra_jump_level']} | {costs['jump']} عملة", f"Extra jump level {self.progress['extra_jump_level']} | {costs['jump']} coins"),
+                    "berserk": self.t(f"قوة الغضب - المستوى {self.progress['berserk_level']} | {costs['berserk']} عملة", f"Berserk damage level {self.progress['berserk_level']} | {costs['berserk']} coins"),
+                }
+                for skill, btn in self.armory_buttons.items():
+                    btn.text = labels[skill]
+                    btn.draw(self.screen, self.small_font)
+                self.btn_armory_back.draw(self.screen, self.font)
 
             elif self.state == "settings":
                 title_txt = fix_text(
@@ -694,5 +783,5 @@ class MainMenu:
                     self.font
                 )
 
-            pygame.display.flip()
+            present(self.screen)
             clock.tick(60)

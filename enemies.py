@@ -54,6 +54,9 @@ class Enemy:
         
         self.width = 50
         self.height = 90
+        if self.enemy_type == "king":
+            self.width = 100
+            self.height = 150
 
         self.vel_x = 0
         self.vel_y = 0
@@ -68,31 +71,34 @@ class Enemy:
 
         # إعداد الطبقات: القوة والحجم بناءً على نوع العدو
         if self.enemy_type == "soldier":
-            self.max_health = 50 + (stage * 10)
+            self.max_health = int((50 + (stage * 10)) * 1.35)
             self.speed = 2.5 + (stage * 0.1)
-            self.damage = 10 + (stage * 2)
+            self.damage = int((10 + (stage * 2)) * 1.35)
             self.attack_range = 60
             self.sight_range = 400
         elif self.enemy_type == "commander":
-            self.max_health = 120 + (stage * 15)
+            self.max_health = int((120 + (stage * 15)) * 1.4)
             self.speed = 3.0 + (stage * 0.1)
-            self.damage = 20 + (stage * 3)
+            self.damage = int((20 + (stage * 3)) * 1.4)
             self.attack_range = 80
             self.sight_range = 500
         elif self.enemy_type == "guard":
-            self.max_health = 200 + (stage * 20)
+            self.max_health = int((200 + (stage * 20)) * 1.55)
             self.speed = 2.0 + (stage * 0.1)
-            self.damage = 30 + (stage * 4)
+            self.damage = int((30 + (stage * 4)) * 1.5)
             self.attack_range = 90
             self.sight_range = 450
         elif self.enemy_type == "king":
-            self.max_health = 500 + (stage * 50)
+            self.max_health = int((500 + (stage * 50)) * 2.0)
             self.speed = 3.5 + (stage * 0.1)
-            self.damage = 45 + (stage * 5)
+            self.damage = int((45 + (stage * 5)) * 1.7)
             self.attack_range = 130
             self.sight_range = 600
             
         self.health = self.max_health
+        self.attack_cooldown = 0
+        self.arrow_cooldown = 100 if self.enemy_type == "guard" else 150
+        self.reward_claimed = False
 
         # تحميل حركات الهيكل العظمي مع تقطيعها الصحيح
         # تنبيه: إذا ظهر الهجوم بشكل مقطوع، افتح صورة Skeleton Attack وعدّ الهياكل فيها واكتب الرقم بدلاً من 18
@@ -254,8 +260,8 @@ class Enemy:
             # تحديد الأحجام للطبقات!
             target_height = 120 # الجندي
             if self.enemy_type == "commander": target_height = 150
-            elif self.enemy_type == "guard": target_height = 180
-            elif self.enemy_type == "king": target_height = 240 # الملك العملاق
+            elif self.enemy_type == "guard": target_height = 205
+            elif self.enemy_type == "king": target_height = 330 # الملك أكبر بوضوح
                 
             ratio = target_height / img.get_height()
             target_width = int(img.get_width() * ratio)

@@ -1,5 +1,6 @@
 
 import pygame
+from display_utils import present
 import json
 import os
 import copy
@@ -1257,5 +1258,5 @@ class ControlEditor:
                         self.dragging = None
                         self.slider_dragging = False
 
-            pygame.display.flip()
+            present(self.screen)
             clock.tick(60)

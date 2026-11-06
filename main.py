@@ -7,8 +7,10 @@ import os
 from world import World
 from enemies import Enemy
 from stage_layout import StageLayout
-from main_menu import MainMenu, load_settings
+from main_menu import MainMenu, load_settings, fix_text, get_arabic_font
 from game_paths import asset_path
+from progression import load_progress, save_progress, add_coins, complete_stage
+from display_utils import present
 
 IS_ANDROID = (sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ)
 
@@ -28,18 +30,20 @@ FPS = 60
 
 if IS_ANDROID:
     try:
-        screen = pygame.display.set_mode(
-            (WIDTH, HEIGHT),
-            pygame.FULLSCREEN | pygame.SCALED
-        )
+        # Full native display + fixed logical canvas; final presentation stretches
+        # to the real device bounds, avoiding the black letterbox edges.
+        pygame.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        screen = pygame.Surface((WIDTH, HEIGHT)).convert()
     except (pygame.error, TypeError):
-        # توافق احتياطي لإصدارات SDL التي لا تدعم SCALED.
-        screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+        pygame.display_surface = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN | pygame.SCALED)
+        screen = pygame.display_surface
 else:
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display_surface = pygame.display.set_mode((WIDTH, HEIGHT))
+    screen = pygame.display_surface
 
 pygame.display.set_caption("SEF - The Adventurer")
 clock = pygame.time.Clock()
+game_progress = load_progress()
 
 SKY = (110, 180, 235)
 GROUND = (70, 55, 40)
@@ -112,7 +116,7 @@ class Player:
         self.gravity = 0.7
         self.on_ground = False
         self.current_floor_y = GROUND_Y
-        self.max_jumps = 3
+        self.max_jumps = 3 + min(3, int(game_progress.get("extra_jump_level", 0)))
         self.jumps_left = self.max_jumps
         self.facing = 1
         self.max_health = 100
@@ -120,6 +124,8 @@ class Player:
         self.lives = 3
         self.max_lives = 3
         self.shield_timer = 0
+        self.shield_cooldown = 0
+        self.legendary_cooldown = 0
         self.last_safe_pos = (300, GROUND_Y - 100)
         self.state = "idle"
         self.crouching = False
@@ -131,7 +137,7 @@ class Player:
             "jump": PlayerAnimator(sheet_path, start_frame=14, frame_count=4, speed=0.15, loop=False),
             "attack": PlayerAnimator(sheet_path, start_frame=42, frame_count=5, speed=0.2, loop=False),
             "special": PlayerAnimator(sheet_path, start_frame=47, frame_count=6, speed=0.15, loop=False),
-            "legendary": PlayerAnimator(sheet_path, start_frame=53, frame_count=6, speed=0.1, loop=False)
+            "legendary": PlayerAnimator(sheet_path, start_frame=53, frame_count=6, speed=0.25, loop=False)
         }
         
         self.combo_step = 0
@@ -206,7 +212,8 @@ class Player:
         else:
             self.on_ground = False
 
-        self.x = max(0, min(self.x, WORLD_WIDTH - self.width))
+        stage_limit = max(WIDTH + 100, int(getattr(stage_layout, "stage_length", WORLD_WIDTH)))
+        self.x = max(0, min(self.x, stage_limit - self.width))
 
         if self.combo_timer > 0: self.combo_timer -= 1
         else:
@@ -220,7 +227,8 @@ class Player:
             if self.special_hit_timer <= 0:
                 self.special_hit_timer = 8
                 self.special_hits_done += 1
-                self.damage_nearby(enemies, 25)
+                skill_bonus = int(game_progress.get("sword_level", 0)) * 8 + int(game_progress.get("berserk_level", 0)) * 5
+                self.damage_nearby(enemies, 25 + skill_bonus)
             if self.special_hits_done >= 7:
                 self.special_timer = 0
 
@@ -233,10 +241,13 @@ class Player:
                 if not self.legendary_done:
                     self.legendary_done = True
                     self.energy_timer = 35
-                    self.damage_all_visible(enemies, 100)
+                    ultimate_bonus = int(game_progress.get("sword_level", 0)) * 15 + int(game_progress.get("berserk_level", 0)) * 10
+                    self.damage_all_visible(enemies, 100 + ultimate_bonus)
 
         if self.energy_timer > 0: self.energy_timer -= 1
         if self.shield_timer > 0: self.shield_timer -= 1
+        if self.shield_cooldown > 0: self.shield_cooldown -= 1
+        if self.legendary_cooldown > 0: self.legendary_cooldown -= 1
 
         if self.on_ground and self.current_floor_y <= GROUND_Y + 20:
             self.last_safe_pos = (int(self.x), int(self.y))
@@ -260,10 +271,13 @@ class Player:
         else:
             self.attack_timer = 15
         self.combo_timer = self.attack_timer + 15
-        if self.combo_step == 1: self.damage_nearby(enemies, 20, is_heavy=False)
-        elif self.combo_step == 2: self.damage_nearby(enemies, 22, is_heavy=False)
-        elif self.combo_step == 3: self.damage_nearby(enemies, 24, is_heavy=False)
-        elif self.combo_step == 4: self.damage_nearby(enemies, 35, is_heavy=True)
+        sword_bonus = int(game_progress.get("sword_level", 0)) * 8
+        berserk_bonus = int(game_progress.get("berserk_level", 0)) * 5
+        bonus = sword_bonus + berserk_bonus
+        if self.combo_step == 1: self.damage_nearby(enemies, 20 + bonus, is_heavy=False)
+        elif self.combo_step == 2: self.damage_nearby(enemies, 22 + bonus, is_heavy=False)
+        elif self.combo_step == 3: self.damage_nearby(enemies, 24 + bonus, is_heavy=False)
+        elif self.combo_step == 4: self.damage_nearby(enemies, 35 + bonus * 2, is_heavy=True)
     
     def special_attack(self):
         if self.attack_timer > 0 or self.legendary_timer > 0 or self.special_timer > 0: return
@@ -278,18 +292,35 @@ class Player:
         self.state = "special"
 
     def legendary_attack(self):
-        if self.attack_timer > 0 or self.special_timer > 0 or self.legendary_timer > 0: return
+        if self.attack_timer > 0 or self.special_timer > 0 or self.legendary_timer > 0 or self.legendary_cooldown > 0: return
         if "legendary" in self.animations and self.animations["legendary"].frames:
             anim = self.animations["legendary"]
             anim.current_frame = 0
-            self.legendary_timer = int(len(anim.frames) / anim.speed)
-            if self.legendary_timer < 110: self.legendary_timer = 110
+            self.legendary_timer = max(36, int(len(anim.frames) / anim.speed))
         else:
-            self.legendary_timer = 110
+            self.legendary_timer = 36
+        self.legendary_cooldown = 120 * FPS
         self.legendary_phase = 1
         self.legendary_done = False
         self.energy_timer = 0
         self.state = "legendary"
+
+    def activate_shield(self):
+        if game_progress.get("shield_unlocked", False) and self.shield_timer <= 0 and self.shield_cooldown <= 0:
+            self.shield_timer = 60 * FPS
+            self.shield_cooldown = 120 * FPS
+
+    def throw_spear(self):
+        if not game_progress.get("spear_unlocked", False):
+            return
+        if len(spear_projectiles) >= 3:
+            return
+        spear_projectiles.append({
+            "x": self.x + (self.width if self.facing > 0 else -20),
+            "y": self.y + 42,
+            "vx": self.facing * 16,
+            "damage": 90 + int(game_progress.get("sword_level", 0)) * 10,
+        })
 
     def damage_nearby(self, enemies, damage, is_heavy=False):
         attack_range = 150
@@ -458,15 +489,17 @@ def get_control_at(pos):
     return None
 
 TOUCH_SYMBOL_FONT = pygame.font.SysFont("arial", 32, bold=True)
-TOUCH_LABEL_FONT = pygame.font.SysFont("arial", 11, bold=True)
-HUD_FONT = pygame.font.SysFont("arial", 24, bold=True)
-BUTTON_FONT = pygame.font.SysFont("arial", 28, bold=True)
+TOUCH_LABEL_FONT = get_arabic_font(12)
+HUD_FONT = get_arabic_font(23)
+BUTTON_FONT = get_arabic_font(28)
 
 ACTIVE_UPDATE_BEHIND = 900
 ACTIVE_UPDATE_AHEAD = 1400
 DRAW_MARGIN_X = 260
 
 PAUSE_BTN_RECT = pygame.Rect(WIDTH - 75, 18, 54, 54)
+SKILL_SHIELD_RECT = pygame.Rect(WIDTH - 250, 18, 76, 54)
+SKILL_SPEAR_RECT = pygame.Rect(WIDTH - 165, 18, 76, 54)
 PAUSE_RESUME_RECT = pygame.Rect(WIDTH // 2 - 170, HEIGHT // 2 - 35, 340, 64)
 PAUSE_MENU_RECT = pygame.Rect(WIDTH // 2 - 170, HEIGHT // 2 + 50, 340, 64)
 PAUSE_AR_CACHE = {}
@@ -559,7 +592,9 @@ def draw_touch_controls(pressed_buttons):
         symbol.set_alpha(opacity)
         button_surface.blit(symbol, symbol.get_rect(center=(rect.width // 2, rect.height // 2 - 10)))
 
-        label = label_font.render(CONTROL_LABELS[name], True, WHITE)
+        arabic_labels = {"back": "يسار", "forward": "يمين", "down": "انحناء", "jump": "قفز", "attack": "هجوم", "special": "خاص", "legendary": "قاضية"}
+        label_text = arabic_labels.get(name, CONTROL_LABELS[name]) if game_settings.get("language", "ar") == "ar" else CONTROL_LABELS[name]
+        label = label_font.render(fix_text(label_text), True, WHITE)
         label.set_alpha(opacity)
         button_surface.blit(label, label.get_rect(center=(rect.width // 2, rect.height - 12)))
         screen.blit(button_surface, rect.topleft)
@@ -595,13 +630,25 @@ def draw_touch_controls(pressed_buttons):
         pygame.draw.circle(thumb, (255, 255, 255, JOYSTICK_OPACITY), thumb_center, thumb_radius, 3)
         screen.blit(thumb, (thumb_x - thumb_center[0], thumb_y - thumb_center[1]))
 
+def draw_skill_buttons():
+    if game_progress.get("shield_unlocked", False):
+        color = (35, 130, 190) if player.shield_timer <= 0 else (35, 170, 120)
+        pygame.draw.rect(screen, color, SKILL_SHIELD_RECT, border_radius=10)
+        txt = HUD_FONT.render(fix_text("درع"), True, WHITE)
+        screen.blit(txt, txt.get_rect(center=SKILL_SHIELD_RECT.center))
+    if game_progress.get("spear_unlocked", False):
+        pygame.draw.rect(screen, (145, 95, 35), SKILL_SPEAR_RECT, border_radius=10)
+        txt = HUD_FONT.render(fix_text("رمح"), True, WHITE)
+        screen.blit(txt, txt.get_rect(center=SKILL_SPEAR_RECT.center))
+
 def create_stage_enemies(stage, stage_layout):
     from enemies import Enemy
     import random
     enemies = []
     x_pos = 1000
     GROUND_Y = 570
-    while x_pos < 34000:
+    stage_end = max(1200, int(getattr(stage_layout, "gate_x", 5000)) - 420)
+    while x_pos < stage_end:
         is_safe = True
         if stage_layout.get_ground_y(x_pos, 55, 90, GROUND_Y - 90) != GROUND_Y:
             is_safe = False
@@ -630,18 +677,23 @@ def create_stage_enemies(stage, stage_layout):
             x_pos += random.randint(800, 1500)
         else:
             x_pos += 200
-    enemies.append(Enemy(34300, "king", GROUND_Y, stage))
+    king_x = max(500, int(getattr(stage_layout, "gate_x", 5000)) - 170)
+    enemies.append(Enemy(king_x, "king", GROUND_Y, stage))
     return enemies
 
 menu = MainMenu(screen)
 starting_stage = menu.run()
 game_settings = load_settings()
+game_progress = load_progress()
 apply_touch_settings(game_settings)
 
 world = World(stage=starting_stage)
 stage_layout = StageLayout(stage=starting_stage)
 player = Player()
 enemies = create_stage_enemies(starting_stage, stage_layout)
+spear_projectiles = []
+arrows = []
+stage_reward_claimed = False
 
 current_stage = starting_stage
 king_defeated = False
@@ -673,13 +725,17 @@ joystick_auto_jump = False
 paused = False
 
 def return_to_main_menu():
-    global starting_stage, game_settings, current_stage, king_defeated, enemies, paused, camera_x, camera_y
+    global starting_stage, game_settings, current_stage, king_defeated, enemies, paused, camera_x, camera_y, game_progress, spear_projectiles, arrows, stage_reward_claimed
     paused = False
     touch_assignments.clear()
     joystick_fingers.clear()
     menu = MainMenu(screen)
     starting_stage = menu.run()
     game_settings = load_settings()
+    game_progress = load_progress()
+    spear_projectiles = []
+    arrows = []
+    stage_reward_claimed = False
     apply_touch_settings(game_settings)
     current_stage = starting_stage
     world.set_stage(current_stage)
@@ -720,25 +776,13 @@ while running:
                 paused = True
                 continue
             if event.key == pygame.K_ESCAPE: running = False
-            if event.key == pygame.K_RETURN:
-                if current_stage < 12:
-                    current_stage += 1
-                else:
-                    current_stage = 1
-                world.set_stage(current_stage)
-                stage_layout = StageLayout(stage=current_stage)
-                player.x = 200
-                player.y = 100
-                player.vel_y = 0
-                player.on_ground = False
-                player.health = player.max_health if hasattr(player, 'max_health') else 100
-                enemies = create_stage_enemies(current_stage, stage_layout)
-                
             k_map = game_settings["keys"]
             if event.key in (k_map["jump"], pygame.K_UP): player.jump()
             if event.key == k_map["attack"]: player.normal_attack(enemies)
             if event.key == k_map["special"]: player.special_attack()
             if event.key == k_map["legendary"]: player.legendary_attack()
+            if event.key == pygame.K_u: player.activate_shield()
+            if event.key == pygame.K_i: player.throw_spear()
 
         if event.type == pygame.FINGERDOWN:
             pointer_id = get_finger_key(event)
@@ -746,6 +790,12 @@ while running:
 
             if PAUSE_BTN_RECT.collidepoint(pos):
                 paused = True
+                continue
+            if SKILL_SHIELD_RECT.collidepoint(pos):
+                player.activate_shield()
+                continue
+            if SKILL_SPEAR_RECT.collidepoint(pos):
+                player.throw_spear()
                 continue
 
             if TOUCH_MODE == "joystick":
@@ -784,6 +834,12 @@ while running:
         elif not IS_ANDROID and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if PAUSE_BTN_RECT.collidepoint(event.pos):
                 paused = True
+                continue
+            if SKILL_SHIELD_RECT.collidepoint(event.pos):
+                player.activate_shield()
+                continue
+            if SKILL_SPEAR_RECT.collidepoint(event.pos):
+                player.throw_spear()
                 continue
             if TOUCH_MODE == "joystick":
                 cx, cy = JOYSTICK_CENTER
@@ -864,6 +920,18 @@ while running:
 
             enemy.update(player.x, player.y, stage_layout)
 
+            if enemy.enemy_type in ("guard", "king") and enemy.is_alive():
+                enemy.arrow_cooldown -= 1
+                dx = (player.x + player.width / 2) - (enemy.x + enemy.width / 2)
+                dy = (player.y + player.height / 2) - (enemy.y + enemy.height / 2)
+                if abs(dx) < 760 and abs(dy) < 260 and enemy.arrow_cooldown <= 0:
+                    length = max(1.0, math.hypot(dx, dy))
+                    speed = 10 if enemy.enemy_type == "guard" else 12
+                    arrows.append({"x": enemy.x + enemy.width / 2, "y": enemy.y + 42,
+                                   "vx": dx / length * speed, "vy": dy / length * speed,
+                                   "damage": 12 if enemy.enemy_type == "guard" else 22})
+                    enemy.arrow_cooldown = 115 if enemy.enemy_type == "guard" else 90
+
             if enemy.is_alive() and enemy.state != "dead":
                 player_rect = player.get_hitbox()
                 enemy_rect = pygame.Rect(enemy.x, enemy.y, enemy.width, enemy.height)
@@ -883,6 +951,38 @@ while running:
                             player.on_ground = False
                             player.hit_count = 0 
 
+        # Reward each defeated enemy exactly once and persist the balance.
+        for enemy in enemies:
+            if not enemy.is_alive() and not getattr(enemy, "reward_claimed", False):
+                enemy.reward_claimed = True
+                reward = 6 if enemy.enemy_type == "king" else (4 if enemy.enemy_type == "guard" else 2)
+                add_coins(game_progress, reward)
+
+        # Spear projectiles travel forward and damage the first enemy they hit.
+        for spear in spear_projectiles[:]:
+            spear["x"] += spear["vx"]
+            spear_rect = pygame.Rect(int(spear["x"]), int(spear["y"]), 42, 10)
+            hit = False
+            for enemy in enemies:
+                if enemy.is_alive() and spear_rect.colliderect(pygame.Rect(enemy.x, enemy.y, enemy.width, enemy.height)):
+                    enemy.take_damage(spear["damage"], 1 if spear["vx"] > 0 else -1, is_heavy=True)
+                    hit = True
+                    break
+            if hit or spear["x"] < camera_x - 100 or spear["x"] > camera_x + WIDTH + 100:
+                spear_projectiles.remove(spear)
+
+        # Guards and kings fire arrows; a sword swing can parry them.
+        for arrow in arrows[:]:
+            arrow["x"] += arrow["vx"]
+            arrow["y"] += arrow["vy"]
+            arrow_rect = pygame.Rect(int(arrow["x"] - 10), int(arrow["y"] - 4), 20, 8)
+            if arrow_rect.colliderect(player.get_hitbox()):
+                if player.attack_timer <= 0 and player.shield_timer <= 0:
+                    player.health -= arrow["damage"]
+                arrows.remove(arrow)
+            elif arrow["x"] < camera_x - 120 or arrow["x"] > camera_x + WIDTH + 120:
+                arrows.remove(arrow)
+
         if player.health <= 0:
             player.lives -= 1
             if player.lives > 0:
@@ -897,6 +997,8 @@ while running:
             else:
                 stage_layout = StageLayout(stage=current_stage)
                 enemies = create_stage_enemies(current_stage, stage_layout)
+                spear_projectiles.clear()
+                arrows.clear()
                 player.x = 300
                 player.y = GROUND_Y - player.height
                 player.vel_x = 0
@@ -915,12 +1017,17 @@ while running:
             break
     king_defeated = not king_alive
 
-    if king_defeated and stage_layout.can_enter_gate(player.x):
+    if king_defeated and stage_layout.can_enter_gate(player.x) and not stage_reward_claimed:
+        complete_stage(game_progress, current_stage)
+        add_coins(game_progress, 6)
+        stage_reward_claimed = True
         if current_stage < 12:
             current_stage += 1
             world.set_stage(current_stage)
             stage_layout = StageLayout(current_stage)
             enemies = create_stage_enemies(current_stage, stage_layout)
+            spear_projectiles.clear()
+            arrows.clear()
             player.x = 300
             player.y = GROUND_Y - player.height
             player.vel_x = 0
@@ -928,10 +1035,11 @@ while running:
             camera_x = 0
             camera_y = 0
             king_defeated = False
+            stage_reward_claimed = False
 
     target_camera_x = (player.x - WIDTH // 2)
     camera_x += (target_camera_x - camera_x) * 0.1
-    camera_x = max(0, min(camera_x, WORLD_WIDTH - WIDTH))
+    camera_x = max(0, min(camera_x, max(0, stage_layout.stage_length - WIDTH)))
 
     target_camera_y = (player.y + player.height // 2 - HEIGHT // 2)
     camera_y += (target_camera_y - camera_y) * 0.1
@@ -950,22 +1058,45 @@ while running:
     draw_touch_controls(pressed_buttons)
 
     font = HUD_FONT
-    screen.blit(font.render(f"STATE: {player.state}", True, WHITE), (20, 20))
-    screen.blit(font.render(f"COMBO: {player.combo_step}/4", True, WHITE), (20, 50))
-    screen.blit(font.render(f"JUMPS: {player.jumps_left}", True, WHITE), (20, 80))
-    screen.blit(font.render(f"STAGE: {current_stage}/12", True, WHITE), (20, 110))
-    screen.blit(font.render(f"HEALTH: {int(max(0, player.health))}", True, RED), (20, 140))
+    state_ar = {"idle": "استعداد", "run": "جري", "jump": "قفز", "attack": "هجوم", "special": "مهارة", "legendary": "قاضية", "crouch": "انحناء"}.get(player.state, player.state)
+    hud_lines = [
+        f"الحالة: {state_ar}" if game_settings.get("language", "ar") == "ar" else f"STATE: {player.state}",
+        f"الضربات: {player.combo_step}/4" if game_settings.get("language", "ar") == "ar" else f"COMBO: {player.combo_step}/4",
+        f"القفزات: {player.jumps_left}" if game_settings.get("language", "ar") == "ar" else f"JUMPS: {player.jumps_left}",
+        f"المرحلة: {current_stage}/12" if game_settings.get("language", "ar") == "ar" else f"STAGE: {current_stage}/12",
+        f"الصحة: {int(max(0, player.health))}" if game_settings.get("language", "ar") == "ar" else f"HEALTH: {int(max(0, player.health))}",
+        f"العملات: {game_progress['coins']}" if game_settings.get("language", "ar") == "ar" else f"COINS: {game_progress['coins']}",
+    ]
+    for idx, line in enumerate(hud_lines):
+        color = RED if idx == 4 else (GOLD if idx == 5 else WHITE)
+        screen.blit(font.render(fix_text(line), True, color), (20, 20 + idx * 30))
 
     for i in range(player.max_lives):
         draw_heart_icon(screen, 38 + i * 38, 188, 28, filled=(i < player.lives))
 
     if player.shield_timer > 0:
         sec_left = math.ceil(player.shield_timer / 60.0)
-        screen.blit(font.render(f"SHIELD: {sec_left}s", True, CYAN), (20, 215))
+        shield_label = f"الدرع: {sec_left}ث" if game_settings.get("language", "ar") == "ar" else f"SHIELD: {sec_left}s"
+        screen.blit(font.render(fix_text(shield_label), True, CYAN), (20, 215))
 
+    for spear in spear_projectiles:
+        pygame.draw.line(screen, (210, 190, 140), (int(spear["x"] - camera_x), int(spear["y"] - camera_y)), (int(spear["x"] + 38 - camera_x), int(spear["y"] - camera_y)), 5)
+        pygame.draw.polygon(screen, (230, 230, 220), [(int(spear["x"] + 42 - camera_x), int(spear["y"] - camera_y)), (int(spear["x"] + 30 - camera_x), int(spear["y"] - camera_y - 6)), (int(spear["x"] + 30 - camera_x), int(spear["y"] - camera_y + 6))])
+    for arrow in arrows:
+        ax, ay = int(arrow["x"] - camera_x), int(arrow["y"] - camera_y)
+        pygame.draw.line(screen, (120, 75, 35), (ax - 12, ay), (ax + 12, ay), 3)
+        pygame.draw.polygon(screen, (210, 210, 210), [(ax + 13, ay), (ax + 5, ay - 5), (ax + 5, ay + 5)])
+
+    draw_skill_buttons()
+    if player.legendary_cooldown > 0:
+        ready_left = math.ceil(player.legendary_cooldown / FPS)
+        ready_label = f"القاضية بعد: {ready_left}ث" if game_settings.get("language", "ar") == "ar" else f"ULTIMATE: {ready_left}s"
+    else:
+        ready_label = "القاضية جاهزة" if game_settings.get("language", "ar") == "ar" else "ULTIMATE READY"
+    screen.blit(font.render(fix_text(ready_label), True, GOLD), (20, 245))
     draw_pause_button_and_overlay(paused, game_settings)
 
-    pygame.display.flip()
+    present(screen)
 
 pygame.quit()
 sys.exit()

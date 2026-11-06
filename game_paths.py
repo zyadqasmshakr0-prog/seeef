@@ -30,3 +30,8 @@ def settings_path():
         folder = BASE_DIR
 
     return os.path.join(folder, "settings.json")
+
+
+def progress_path():
+    """Return the writable location for persistent game progress."""
+    return os.path.join(os.path.dirname(settings_path()), "progress.json")
