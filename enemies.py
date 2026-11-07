@@ -6,31 +6,38 @@ import os
 from game_paths import asset_path
 
 class SpriteSheetAnimator:
+    # مشاركة إطارات الصور بين جميع الأعداء لتقليل استهلاك ذاكرة الهاتف.
+    _sheet_cache = {}
+    _flip_cache = {}
+
     def __init__(self, image_path, frame_count, speed=0.15):
-        self.frames = []
         self.current_frame = 0
         self.speed = speed
         self.frame_count = frame_count
-        self.finished = False # لمعرفة هل انتهت الحركة (مهم للموت والهجوم)
-        
-        try:
-            self.sprite_sheet = pygame.image.load(image_path).convert_alpha()
-            sheet_width = self.sprite_sheet.get_width()
-            sheet_height = self.sprite_sheet.get_height()
-            
-            self.frame_width = sheet_width // frame_count
-            self.frame_height = sheet_height
-            
-            for i in range(frame_count):
-                rect = pygame.Rect(i * self.frame_width, 0, self.frame_width, self.frame_height)
-                image = pygame.Surface((self.frame_width, self.frame_height), pygame.SRCALPHA)
-                image.blit(self.sprite_sheet, (0, 0), rect)
-                self.frames.append(image)
-        except Exception as e:
-            print(f"تعذر تحميل صورة العدو {image_path}: {e}")
+        self.finished = False
+        self.cache_key = (os.path.abspath(image_path), int(frame_count))
+
+        if self.cache_key not in self._sheet_cache:
+            frames = []
+            try:
+                sheet = pygame.image.load(image_path).convert_alpha()
+                sheet_width = sheet.get_width()
+                sheet_height = sheet.get_height()
+                frame_width = max(1, sheet_width // frame_count)
+                for i in range(frame_count):
+                    rect = pygame.Rect(i * frame_width, 0, frame_width, sheet_height)
+                    image = pygame.Surface((frame_width, sheet_height), pygame.SRCALPHA)
+                    image.blit(sheet, (0, 0), rect)
+                    frames.append(image)
+            except Exception as exc:
+                print(f"تعذر تحميل صورة العدو {image_path}: {exc}")
+            self._sheet_cache[self.cache_key] = frames
+
+        self.frames = self._sheet_cache[self.cache_key]
 
     def update(self):
-        if not self.frames: return
+        if not self.frames:
+            return
         self.current_frame += self.speed
         if self.current_frame >= len(self.frames):
             self.current_frame = 0
@@ -39,14 +46,22 @@ class SpriteSheetAnimator:
             self.finished = False
 
     def get_current_image(self, facing_right=True):
-        if not self.frames: return None
-        image = self.frames[int(self.current_frame)]
+        if not self.frames:
+            return None
+        index = max(0, min(len(self.frames) - 1, int(self.current_frame)))
+        image = self.frames[index]
         if not facing_right:
-            image = pygame.transform.flip(image, True, False)
+            key = (self.cache_key, index)
+            flipped = self._flip_cache.get(key)
+            if flipped is None:
+                flipped = pygame.transform.flip(image, True, False)
+                self._flip_cache[key] = flipped
+            image = flipped
         return image
 
-
 class Enemy:
+    _scaled_frames = {}
+
     def __init__(self, x, enemy_type, ground_y, stage=1):
         self.x = x
         self.y = ground_y - 90
@@ -69,29 +84,39 @@ class Enemy:
         self.patrol_start_x = x
         self.patrol_range = 300
 
+        # تزداد صعوبة الأعداء تدريجياً في كل مرحلة.
+        difficulty = 1.0 + (max(1, int(stage)) - 1) * 0.12
+        damage_difficulty = 1.0 + (max(1, int(stage)) - 1) * 0.025
+
         # إعداد الطبقات: القوة والحجم بناءً على نوع العدو
-        if self.enemy_type == "soldier":
-            self.max_health = int((50 + (stage * 10)) * 1.35)
+        if self.enemy_type == "skeleton":
+            self.max_health = int((190 + stage * 24) * difficulty)
+            self.speed = 2.35 + stage * 0.075
+            self.damage = int((17 + stage * 2) * damage_difficulty)
+            self.attack_range = 72
+            self.sight_range = 460
+        elif self.enemy_type == "soldier":
+            self.max_health = int((50 + (stage * 10)) * 1.35 * difficulty)
             self.speed = 2.5 + (stage * 0.1)
-            self.damage = int((10 + (stage * 2)) * 1.35)
+            self.damage = int((10 + (stage * 2)) * 1.35 * damage_difficulty)
             self.attack_range = 60
             self.sight_range = 400
         elif self.enemy_type == "commander":
-            self.max_health = int((120 + (stage * 15)) * 1.4)
+            self.max_health = int((120 + (stage * 15)) * 1.4 * difficulty)
             self.speed = 3.0 + (stage * 0.1)
-            self.damage = int((20 + (stage * 3)) * 1.4)
+            self.damage = int((20 + (stage * 3)) * 1.4 * damage_difficulty)
             self.attack_range = 80
             self.sight_range = 500
         elif self.enemy_type == "guard":
-            self.max_health = int((200 + (stage * 20)) * 1.55)
+            self.max_health = int((200 + (stage * 20)) * 1.55 * difficulty)
             self.speed = 2.0 + (stage * 0.1)
-            self.damage = int((30 + (stage * 4)) * 1.5)
+            self.damage = int((30 + (stage * 4)) * 1.5 * damage_difficulty)
             self.attack_range = 90
             self.sight_range = 450
         elif self.enemy_type == "king":
-            self.max_health = int((500 + (stage * 50)) * 2.0)
+            self.max_health = int((500 + (stage * 50)) * 2.0 * difficulty)
             self.speed = 3.5 + (stage * 0.1)
-            self.damage = int((45 + (stage * 5)) * 1.7)
+            self.damage = int((45 + (stage * 5)) * 1.7 * damage_difficulty)
             self.attack_range = 130
             self.sight_range = 600
             
@@ -181,6 +206,7 @@ class Enemy:
             
             # 1. الحالة الأولى: اللاعب في النطاق ويمكن الوصول إليه (هجوم ومطاردة)
             if dist_to_player <= self.sight_range and player_is_reachable:
+                self.disguised = False
                 if dist_to_player <= self.attack_range:
                     if self.attack_cooldown <= 0:
                         self.state = "attack"
@@ -200,9 +226,28 @@ class Enemy:
             # 2. الحالة الثانية (مباشرة): اللاعب ابتعد أو قفز فوق الجبل (يعود للفخ فوراً)
             else:
                 self.state = "idle"
+                self.disguised = True
                 move_x = 0  # يتجمد فوراً ويتحول لشجرة أو صخرة
                 
         # الفيزياء والاصطدام
+        if self.on_ground and not self.disguised:
+            intended_dx = move_x + self.vel_x
+            if abs(intended_dx) > 0.5:
+                direction = 1 if intended_dx > 0 else -1
+                probe_x = self.x + self.width + 4 if direction > 0 else self.x - 4
+                feet_y = self.y + self.height
+                safe_ground = any(
+                    platform.width > 0
+                    and platform not in stage_layout.bridge_rects
+                    and platform not in stage_layout.dynamic_plat_rects
+                    and platform.left <= probe_x <= platform.right
+                    and feet_y - 50 <= platform.top <= feet_y + 65
+                    for platform in stage_layout.platforms
+                )
+                if not safe_ground:
+                    move_x = 0
+                    self.vel_x = 0
+
         self.x += move_x
         self.x += self.vel_x
         if self.on_ground: self.vel_x *= 0.8
@@ -242,9 +287,9 @@ class Enemy:
             current_anim = "walk"
             
         if current_anim not in self.animations or not self.animations[current_anim].frames:
-            current_anim = "idle"
+            current_anim = "walk" if self.animations.get("walk") and self.animations["walk"].frames else "idle"
             
-        animator = self.animations.get(current_anim)
+        animator = None if getattr(self, "disguised", False) and self.is_alive() else self.animations.get(current_anim)
         
         if animator and animator.frames:
             # إيقاف التحديث عند آخر لقطة للموت، وتجميد الأنيميشن أثناء النهاية
@@ -257,16 +302,27 @@ class Enemy:
                 
             img = animator.get_current_image(facing_right=(self.facing == 1))
             
-            # تحديد الأحجام للطبقات!
-            target_height = 120 # الجندي
-            if self.enemy_type == "commander": target_height = 150
+            # تحجيم كل إطار مرة واحدة فقط لتخفيف الحمل على الهاتف.
+            target_height = 120
+            if self.enemy_type == "skeleton": target_height = 145
+            elif self.enemy_type == "commander": target_height = 150
             elif self.enemy_type == "guard": target_height = 205
-            elif self.enemy_type == "king": target_height = 330 # الملك أكبر بوضوح
-                
-            ratio = target_height / img.get_height()
-            target_width = int(img.get_width() * ratio)
-            img = pygame.transform.scale(img, (target_width, target_height))
-            
+            elif self.enemy_type == "king": target_height = 330
+
+            frame_index = max(0, min(len(animator.frames) - 1, int(animator.current_frame)))
+            scale_key = (animator.cache_key, frame_index, self.enemy_type, target_height, self.facing)
+            scaled = Enemy._scaled_frames.get(scale_key)
+            if scaled is None:
+                source = animator.get_current_image(facing_right=(self.facing == 1))
+                ratio = target_height / max(1, source.get_height())
+                target_width = max(1, int(source.get_width() * ratio))
+                scaled = pygame.transform.scale(source, (target_width, target_height))
+                Enemy._scaled_frames[scale_key] = scaled
+            img = scaled
+            # استخرج العرض من الصورة بعد التحجيم؛ فقد تكون الصورة موجودة في
+            # الذاكرة المؤقتة، وعندها لا يتم تنفيذ السطر الذي يحسب target_width.
+            target_width = img.get_width()
+
             img_rect = img.get_rect(midbottom=(sx + self.width // 2, sy + self.height))
             
             # --- رسم الرداء الأسود للملك خلفه ---
@@ -298,7 +354,7 @@ class Enemy:
             
             # --- شريط الدم الدائم والجميل ---
             if self.is_alive():
-                bar_width = target_width - 20
+                bar_width = max(20, target_width - 20)
                 bar_x = img_rect.centerx - (bar_width // 2)
                 bar_y = img_rect.top - 15
                 

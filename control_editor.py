@@ -16,7 +16,10 @@ IS_ANDROID = (sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ)
 # دعم تشكيل وعرض الحروف العربية
 try:
     import arabic_reshaper
-    from bidi.algorithm import get_display
+    try:
+        from bidi.algorithm import get_display
+    except ImportError:
+        from bidi import get_display
     ARABIC_SUPPORT = True
 except ImportError:
     ARABIC_SUPPORT = False
@@ -40,6 +43,7 @@ DEFAULT_POSITIONS = {
     "attack": (990, 605, 80, 80),
     "special": (1080, 505, 80, 80),
     "legendary": (1170, 605, 80, 80),
+    "spear": (1170, 505, 80, 80),
 }
 
 DEFAULT_JOYSTICK = {
@@ -56,6 +60,7 @@ DEFAULT_OPACITY = {
     "attack": 210,
     "special": 210,
     "legendary": 210,
+    "spear": 210,
     "joystick": 180
 }
 
@@ -66,7 +71,8 @@ LABELS = {
     "jump": ("^", "JUMP"),
     "attack": ("X", "ATTACK"),
     "special": ("*", "SPECIAL"),
-    "legendary": ("!", "ULTIMATE")
+    "legendary": ("!", "ULTIMATE"),
+    "spear": (">", "SPEAR")
 }
 
 # الترجمات المستخدمة داخل المحرر
@@ -95,17 +101,19 @@ TRANSLATIONS = {
     "ATTACK": "هجوم",
     "SPECIAL": "هجوم خاص",
     "ULTIMATE": "هجوم خارق",
+    "SPEAR": "???",
 
     "NONE": "لا شيء",
     "SELECTED": "المحدد",
     "OPACITY": "الشفافية",
+    "SIZE": "الحجم",
     "Drag the slider to change transparency":
         "اسحب الشريط لتغيير الشفافية",
 
     "PREVIEW MODE": "وضع المعاينة",
 
     "Drag buttons to move | Drag yellow corner to resize":
-        "اسحب الأزرار لتحريكها واسحب الزاوية الصفراء لتغيير الحجم",
+        "اسحب الأزرار لتحريكها واستخدم + و - أو الزاوية الصفراء لتغيير الحجم",
 
     "Nothing to undo": "لا يوجد شيء للتراجع عنه",
     "Nothing to redo": "لا يوجد شيء لإعادته",
@@ -164,8 +172,8 @@ def get_control_rects(settings, width, height):
             h = saved.get("h", h)
 
         try:
-            w = max(45, min(150, int(w)))
-            h = max(45, min(150, int(h)))
+            w = max(45, min(220, int(w)))
+            h = max(45, min(220, int(h)))
             x = int(x)
             y = int(y)
         except (ValueError, TypeError):
@@ -196,7 +204,7 @@ def get_joystick(settings):
     return {
         "x": max(40, min(1240, x)),
         "y": max(40, min(680, y)),
-        "radius": max(40, min(120, radius))
+        "radius": max(40, min(160, radius))
     }
 
 
@@ -268,8 +276,10 @@ class ControlEditor:
             "back": pygame.Rect(1060, 12, 125, 42),
         }
 
-        self.opacity_panel = pygame.Rect(15, 75, 270, 125)
+        self.opacity_panel = pygame.Rect(15, 75, 410, 150)
         self.opacity_slider = pygame.Rect(35, 163, 225, 10)
+        self.size_minus_rect = pygame.Rect(300, 95, 48, 38)
+        self.size_plus_rect = pygame.Rect(355, 95, 48, 38)
 
         self.slider_dragging = False
 
@@ -308,7 +318,10 @@ class ControlEditor:
         if self.is_arabic and ARABIC_SUPPORT:
             try:
                 reshaped = arabic_reshaper.reshape(text)
-                return get_display(reshaped)
+                try:
+                    return get_display(reshaped, base_dir="R")
+                except TypeError:
+                    return get_display(reshaped)
             except Exception:
                 return text
 
@@ -773,13 +786,35 @@ class ControlEditor:
             9
         )
 
-        hint = self.render_text(
+        # أدوات تكبير وتصغير الزر المحدد، بالإضافة إلى مقبض السحب الأصفر.
+        for rect, symbol in ((self.size_minus_rect, "−"), (self.size_plus_rect, "+")):
+            pygame.draw.rect(self.screen, (55, 105, 155), rect, border_radius=7)
+            pygame.draw.rect(self.screen, WHITE, rect, 2, border_radius=7)
+            symbol_surface = self.font.render(symbol, True, WHITE)
+            self.screen.blit(symbol_surface, symbol_surface.get_rect(center=rect.center))
+
+        if self.selected == "joystick":
+            current_size = int(self.joystick["radius"]) * 2
+        elif self.selected in self.rects:
+            current_size = self.rects[self.selected].width
+        else:
+            current_size = 0
+        size_text = self.render_text(self.tr("SIZE") + ": " + str(current_size), self.tiny_font, GOLD)
+        self.screen.blit(size_text, (300, 145))
+
+        opacity_hint = self.render_text(
             self.tr("Drag the slider to change transparency"),
             self.tiny_font,
             WHITE
         )
+        self.screen.blit(opacity_hint, (30, 180))
 
-        self.screen.blit(hint, (30, 180))
+        resize_hint = self.render_text(
+            self.tr("Drag buttons to move | Drag yellow corner to resize"),
+            self.tiny_font,
+            WHITE
+        )
+        self.screen.blit(resize_hint, (30, 207))
 
     # -------------------------------------------------
     # رسم الواجهة كاملة
@@ -861,7 +896,7 @@ class ControlEditor:
 
         if self.mode == "joystick":
             self.draw_joystick()
-            visible = ["attack", "special", "legendary"]
+            visible = ["attack", "special", "legendary", "spear"]
         else:
             visible = list(self.rects.keys())
 
@@ -929,7 +964,7 @@ class ControlEditor:
         if self.mode == "buttons":
             return list(self.rects.keys())
 
-        return ["attack", "special", "legendary"]
+        return ["attack", "special", "legendary", "spear"]
 
     def resize_handle(self, name):
         rect = self.rects[name]
@@ -1003,7 +1038,7 @@ class ControlEditor:
 
             self.joystick["radius"] = max(
                 40,
-                min(120, radius)
+                min(160, radius)
             )
 
         elif self.dragging.startswith("resize:"):
@@ -1013,7 +1048,7 @@ class ControlEditor:
             size = max(
                 45,
                 min(
-                    150,
+                    220,
                     max(
                         pos[0] - rect.x,
                         pos[1] - rect.y
@@ -1053,6 +1088,22 @@ class ControlEditor:
                     cy
                 )
             )
+
+    def change_selected_size(self, amount):
+        if self.selected == "joystick" and self.mode == "joystick":
+            self.joystick["radius"] = max(40, min(160, int(self.joystick["radius"]) + amount // 2))
+            return
+
+        if self.selected not in self.rects:
+            return
+
+        rect = self.rects[self.selected]
+        new_w = max(45, min(220, rect.width + amount))
+        new_h = max(45, min(220, rect.height + amount))
+        center = rect.center
+        rect.size = (new_w, new_h)
+        rect.center = center
+        rect.clamp_ip(self.screen.get_rect())
 
     def update_opacity(self, x):
         value = (x - self.opacity_slider.x) / max(
@@ -1130,6 +1181,16 @@ class ControlEditor:
                 return None
 
         if self.preview:
+            return None
+
+        if self.size_minus_rect.collidepoint(pos):
+            self.push_history()
+            self.change_selected_size(-10)
+            return None
+
+        if self.size_plus_rect.collidepoint(pos):
+            self.push_history()
+            self.change_selected_size(10)
             return None
 
         if self.opacity_slider.inflate(10, 25).collidepoint(pos):

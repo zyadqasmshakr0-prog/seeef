@@ -7,7 +7,10 @@ import sys
 
 try:
     import arabic_reshaper
-    from bidi.algorithm import get_display
+    try:
+        from bidi.algorithm import get_display
+    except ImportError:
+        from bidi import get_display
     ARABIC_SUPPORT = True
 except ImportError:
     ARABIC_SUPPORT = False
@@ -61,12 +64,19 @@ DEFAULT_SETTINGS = {
 
 
 def fix_text(text):
+    text = str(text)
     if not ARABIC_SUPPORT:
         return text
 
     if any("\u0600" <= c <= "\u06FF" for c in text):
-        reshaped = arabic_reshaper.reshape(text)
-        return get_display(reshaped)
+        try:
+            reshaped = arabic_reshaper.reshape(text)
+            try:
+                return get_display(reshaped, base_dir="R")
+            except TypeError:
+                return get_display(reshaped)
+        except Exception:
+            return text
 
     return text
 
@@ -82,7 +92,10 @@ def get_arabic_font(size):
 
     for path in font_paths:
         if os.path.exists(path):
-            return pygame.font.Font(path, size)
+            font = pygame.font.Font(path, size)
+            if "Bold" in path:
+                font.set_bold(True)
+            return font
 
     return pygame.font.SysFont("tahoma", size, bold=True)
 
@@ -536,15 +549,15 @@ class MainMenu:
                         self.state = "main"
                     else:
                         costs = {
-                            "sword": 15 + self.progress["sword_level"] * 15,
-                            "shield": 25,
-                            "spear": 30,
-                            "jump": 40 + self.progress["extra_jump_level"] * 20,
-                            "berserk": 35 + self.progress["berserk_level"] * 25,
+                            "sword": 250 + self.progress["sword_level"] * 100,
+                            "shield": (5000, 6000, 7000, 8000, 9000)[min(4, int(self.progress.get("shield_level", 0)))],
+                            "spear": 3000,
+                            "jump": 6000 + self.progress["extra_jump_level"] * 1000,
+                            "berserk": 1500 + self.progress["berserk_level"] * 500,
                         }
                         for skill, btn in self.armory_buttons.items():
                             if btn.is_clicked(event):
-                                if skill == "shield" and self.progress["shield_unlocked"]:
+                                if skill == "shield" and int(self.progress.get("shield_level", 0)) >= 5:
                                     break
                                 if skill == "spear" and self.progress["spear_unlocked"]:
                                     break
@@ -559,6 +572,7 @@ class MainMenu:
                                         self.progress["sword_level"] += 1
                                     elif skill == "shield":
                                         self.progress["shield_unlocked"] = True
+                                        self.progress["shield_level"] = min(5, int(self.progress.get("shield_level", 0)) + 1)
                                     elif skill == "spear":
                                         self.progress["spear_unlocked"] = True
                                     elif skill == "jump":
@@ -688,15 +702,20 @@ class MainMenu:
                 coin_surface = self.font.render(fix_text(coin_txt), True, GOLD)
                 self.screen.blit(coin_surface, coin_surface.get_rect(center=(cx, 135)))
                 costs = {
-                    "sword": 15 + self.progress["sword_level"] * 15,
-                    "shield": 25,
-                    "spear": 30,
-                    "jump": 40 + self.progress["extra_jump_level"] * 20,
-                    "berserk": 35 + self.progress["berserk_level"] * 25,
+                    "sword": 250 + self.progress["sword_level"] * 100,
+                    "shield": (5000, 6000, 7000, 8000, 9000)[min(4, int(self.progress.get("shield_level", 0)))],
+                    "spear": 3000,
+                    "jump": 6000 + self.progress["extra_jump_level"] * 1000,
+                    "berserk": 1500 + self.progress["berserk_level"] * 500,
                 }
                 labels = {
                     "sword": self.t(f"تطوير قوة السيف - المستوى {self.progress['sword_level']} | {costs['sword']} عملة", f"Sword damage level {self.progress['sword_level']} | {costs['sword']} coins"),
-                    "shield": self.t("درع لمدة 60 ثانية - تم الفتح" if self.progress['shield_unlocked'] else f"فتح الدرع لمدة 60 ثانية | {costs['shield']} عملة", "60-second shield - unlocked" if self.progress['shield_unlocked'] else f"Unlock 60-second shield | {costs['shield']} coins"),
+                    "shield": self.t(
+                        (f"تطوير الدرع: {10 + int(self.progress.get('shield_level', 0)) * 10} ثانية | المستوى الأقصى" if int(self.progress.get("shield_level", 0)) >= 5 else f"تطوير الدرع إلى {20 + int(self.progress.get('shield_level', 0)) * 10} ثانية | {costs['shield']} عملة")
+                        if self.progress["shield_unlocked"] else f"فتح الدرع لمدة 20 ثانية | {costs['shield']} عملة",
+                        (f"Shield: {10 + int(self.progress.get('shield_level', 0)) * 10}s | MAX LEVEL" if int(self.progress.get("shield_level", 0)) >= 5 else f"Upgrade shield to {20 + int(self.progress.get('shield_level', 0)) * 10}s | {costs['shield']} coins")
+                        if self.progress["shield_unlocked"] else f"Unlock 20-second shield | {costs['shield']} coins"
+                    ),
                     "spear": self.t("رمي الرمح - تم الفتح" if self.progress['spear_unlocked'] else f"فتح مهارة رمي الرمح | {costs['spear']} عملة", "Spear throw - unlocked" if self.progress['spear_unlocked'] else f"Unlock spear throw | {costs['spear']} coins"),
                     "jump": self.t(f"قفزة إضافية - المستوى {self.progress['extra_jump_level']} | {costs['jump']} عملة", f"Extra jump level {self.progress['extra_jump_level']} | {costs['jump']} coins"),
                     "berserk": self.t(f"قوة الغضب - المستوى {self.progress['berserk_level']} | {costs['berserk']} عملة", f"Berserk damage level {self.progress['berserk_level']} | {costs['berserk']} coins"),

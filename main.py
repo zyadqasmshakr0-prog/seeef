@@ -30,13 +30,15 @@ FPS = 60
 
 if IS_ANDROID:
     try:
-        # Full native display + fixed logical canvas; final presentation stretches
-        # to the real device bounds, avoiding the black letterbox edges.
+        # دع SDL2 يتولى تحجيم المساحة المنطقية بدلاً من تحجيم صورة الشاشة
+        # كاملة داخل Python في كل إطار؛ هذا أخف كثيراً على الهواتف.
+        pygame.display_surface = pygame.display.set_mode(
+            (WIDTH, HEIGHT), pygame.FULLSCREEN | pygame.SCALED
+        )
+        screen = pygame.display_surface
+    except (pygame.error, TypeError):
         pygame.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         screen = pygame.Surface((WIDTH, HEIGHT)).convert()
-    except (pygame.error, TypeError):
-        pygame.display_surface = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN | pygame.SCALED)
-        screen = pygame.display_surface
 else:
     pygame.display_surface = pygame.display.set_mode((WIDTH, HEIGHT))
     screen = pygame.display_surface
@@ -63,43 +65,69 @@ camera_x = 0
 camera_y = 0
 
 class PlayerAnimator:
+    _sheet_cache = {}
+    _frame_cache = {}
+    _flip_cache = {}
+    _scaled_cache = {}
+
     def __init__(self, filepath, start_frame, frame_count, speed=0.2, loop=True):
         self.frames = []
+        self.frame_keys = []
         self.current_frame = 0
         self.speed = speed
         self.finished = False
         self.loop = loop
+        cache_path = os.path.abspath(filepath)
+
         try:
-            sheet = pygame.image.load(filepath).convert_alpha()
-            frame_w = 50
-            frame_h = 37
-            columns = sheet.get_width() // frame_w
+            sheet = self._sheet_cache.get(cache_path)
+            if sheet is None:
+                sheet = pygame.image.load(filepath).convert_alpha()
+                self._sheet_cache[cache_path] = sheet
+
+            frame_w, frame_h = 50, 37
+            columns = max(1, sheet.get_width() // frame_w)
             for i in range(frame_count):
                 index = start_frame + i
-                col = index % columns
-                row = index // columns
-                rect = pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h)
-                img = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
-                img.blit(sheet, (0, 0), rect)
-                self.frames.append(img)
+                key = (cache_path, index)
+                frame = self._frame_cache.get(key)
+                if frame is None:
+                    col = index % columns
+                    row = index // columns
+                    rect = pygame.Rect(col * frame_w, row * frame_h, frame_w, frame_h)
+                    frame = pygame.Surface((frame_w, frame_h), pygame.SRCALPHA)
+                    frame.blit(sheet, (0, 0), rect)
+                    self._frame_cache[key] = frame
+                self.frames.append(frame)
+                self.frame_keys.append(key)
         except Exception as e:
             print(f"تعذر تحميل حركة الشخصية من {filepath}: {e}")
 
     def update(self):
-        if not self.frames: return
+        if not self.frames:
+            return
         self.current_frame += self.speed
         if self.current_frame >= len(self.frames):
-            if self.loop: self.current_frame = 0 
-            else: self.current_frame = len(self.frames) - 1 
+            if self.loop:
+                self.current_frame = 0
+            else:
+                self.current_frame = len(self.frames) - 1
             self.finished = True
         else:
             self.finished = False
 
     def get_current_image(self, facing_right=True):
-        if not self.frames: return None
-        img = self.frames[int(self.current_frame)]
+        if not self.frames:
+            return None
+        index = max(0, min(len(self.frames) - 1, int(self.current_frame)))
+        img = self.frames[index]
         if not facing_right:
-            img = pygame.transform.flip(img, True, False)
+            key = self.frame_keys[index]
+            flipped = self._flip_cache.get(key)
+            if flipped is None:
+                flipped = pygame.transform.flip(img, True, False)
+                self._flip_cache[key] = flipped
+            img = flipped
         return img
 
 class Player:
@@ -307,7 +335,9 @@ class Player:
 
     def activate_shield(self):
         if game_progress.get("shield_unlocked", False) and self.shield_timer <= 0 and self.shield_cooldown <= 0:
-            self.shield_timer = 60 * FPS
+            shield_level = max(1, min(5, int(game_progress.get("shield_level", 1))))
+            shield_seconds = min(60, 10 + shield_level * 10)
+            self.shield_timer = shield_seconds * FPS
             self.shield_cooldown = 120 * FPS
 
     def throw_spear(self):
@@ -353,9 +383,15 @@ class Player:
             target_height = 95 if self.state == "crouch" else 140
             if self.legendary_timer > 0:
                 target_height = 280  
-            ratio = target_height / img.get_height()
-            target_width = int(img.get_width() * ratio)
-            img = pygame.transform.scale(img, (target_width, target_height))
+            frame_index = max(0, min(len(animator.frames) - 1, int(animator.current_frame)))
+            cache_key = (animator.frame_keys[frame_index], self.facing, target_height)
+            scaled = PlayerAnimator._scaled_cache.get(cache_key)
+            if scaled is None:
+                ratio = target_height / max(1, img.get_height())
+                target_width = max(1, int(img.get_width() * ratio))
+                scaled = pygame.transform.scale(img, (target_width, target_height))
+                PlayerAnimator._scaled_cache[cache_key] = scaled
+            img = scaled
             img_rect = img.get_rect(midbottom=(sx + self.width // 2, sy + self.height + 15))
             surface.blit(img, img_rect)
         else:
@@ -435,6 +471,7 @@ CONTROL_RECTS = {
     "attack": pygame.Rect(990, HEIGHT - 115, 80, 80),
     "special": pygame.Rect(1080, HEIGHT - 215, 80, 80),
     "legendary": pygame.Rect(1170, HEIGHT - 115, 80, 80),
+    "spear": pygame.Rect(1170, HEIGHT - 215, 80, 80),
 }
 
 CONTROL_OPACITY = {}
@@ -464,6 +501,7 @@ def apply_touch_settings(settings):
         "attack": (990, HEIGHT - 115, 80, 80),
         "special": (1080, HEIGHT - 215, 80, 80),
         "legendary": (1170, HEIGHT - 115, 80, 80),
+        "spear": (1170, HEIGHT - 215, 80, 80),
     }
 
     for name, default in defaults.items():
@@ -477,12 +515,14 @@ def apply_touch_settings(settings):
     for name in defaults:
         CONTROL_OPACITY[name] = max(0, min(255, int(opacity.get(name, 190))))
 
-CONTROL_SYMBOLS = {"back": "<", "forward": ">", "down": "v", "jump": "^", "attack": "X", "special": "*", "legendary": "!"}
-CONTROL_LABELS = {"back": "BACK", "forward": "MOVE", "down": "CROUCH", "jump": "JUMP", "attack": "ATTACK", "special": "SPECIAL", "legendary": "ULTIMATE"}
+CONTROL_SYMBOLS = {"back": "<", "forward": ">", "down": "v", "jump": "^", "attack": "X", "special": "*", "legendary": "!", "spear": ">"}
+CONTROL_LABELS = {"back": "BACK", "forward": "MOVE", "down": "CROUCH", "jump": "JUMP", "attack": "ATTACK", "special": "SPECIAL", "legendary": "ULTIMATE", "spear": "SPEAR"}
 
 def get_control_at(pos):
     for name, rect in CONTROL_RECTS.items():
         if TOUCH_MODE == "joystick" and name in ("back", "forward", "down", "jump"):
+            continue
+        if name == "spear" and not game_progress.get("spear_unlocked", False):
             continue
         if rect.collidepoint(pos):
             return name
@@ -490,6 +530,8 @@ def get_control_at(pos):
 
 TOUCH_SYMBOL_FONT = pygame.font.SysFont("arial", 32, bold=True)
 TOUCH_LABEL_FONT = get_arabic_font(12)
+TOUCH_BUTTON_CACHE = {}
+JOYSTICK_BASE_CACHE = {}
 HUD_FONT = get_arabic_font(23)
 BUTTON_FONT = get_arabic_font(28)
 
@@ -568,12 +610,15 @@ def activate_control(name):
     elif name == "attack": player.normal_attack(enemies)
     elif name == "special": player.special_attack()
     elif name == "legendary": player.legendary_attack()
+    elif name == "spear" and game_progress.get("spear_unlocked", False): player.throw_spear()
 
 def draw_touch_controls(pressed_buttons):
     symbol_font = TOUCH_SYMBOL_FONT
     label_font = TOUCH_LABEL_FONT
 
     for name, rect in CONTROL_RECTS.items():
+        if name == "spear" and not game_progress.get("spear_unlocked", False):
+            continue
         if TOUCH_MODE == "joystick" and name in ("back", "forward", "down", "jump"):
             continue
         pressed = name in pressed_buttons
@@ -583,29 +628,35 @@ def draw_touch_controls(pressed_buttons):
         else: color = (65, 75, 90)
 
         opacity = CONTROL_OPACITY.get(name, 190)
-        button_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        local_rect = button_surface.get_rect()
-        pygame.draw.ellipse(button_surface, (*color, opacity), local_rect)
-        pygame.draw.ellipse(button_surface, (255, 255, 255, opacity), local_rect, 3)
-
-        symbol = symbol_font.render(CONTROL_SYMBOLS[name], True, WHITE)
-        symbol.set_alpha(opacity)
-        button_surface.blit(symbol, symbol.get_rect(center=(rect.width // 2, rect.height // 2 - 10)))
-
-        arabic_labels = {"back": "يسار", "forward": "يمين", "down": "انحناء", "jump": "قفز", "attack": "هجوم", "special": "خاص", "legendary": "قاضية"}
+        arabic_labels = {"back": "يسار", "forward": "يمين", "down": "انحناء", "jump": "قفز", "attack": "هجوم", "special": "خاص", "legendary": "قاضية", "spear": "???"}
         label_text = arabic_labels.get(name, CONTROL_LABELS[name]) if game_settings.get("language", "ar") == "ar" else CONTROL_LABELS[name]
-        label = label_font.render(fix_text(label_text), True, WHITE)
-        label.set_alpha(opacity)
-        button_surface.blit(label, label.get_rect(center=(rect.width // 2, rect.height - 12)))
+        cache_key = (name, rect.width, rect.height, color, opacity, label_text)
+        button_surface = TOUCH_BUTTON_CACHE.get(cache_key)
+        if button_surface is None:
+            button_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            local_rect = button_surface.get_rect()
+            pygame.draw.ellipse(button_surface, (*color, opacity), local_rect)
+            pygame.draw.ellipse(button_surface, (255, 255, 255, opacity), local_rect, 3)
+            symbol = symbol_font.render(CONTROL_SYMBOLS[name], True, WHITE)
+            symbol.set_alpha(opacity)
+            button_surface.blit(symbol, symbol.get_rect(center=(rect.width // 2, rect.height // 2 - 10)))
+            label = label_font.render(fix_text(label_text), True, WHITE)
+            label.set_alpha(opacity)
+            button_surface.blit(label, label.get_rect(center=(rect.width // 2, rect.height - 12)))
+            TOUCH_BUTTON_CACHE[cache_key] = button_surface
         screen.blit(button_surface, rect.topleft)
 
     if TOUCH_MODE == "joystick":
         cx, cy = JOYSTICK_CENTER
         radius = JOYSTICK_RADIUS
-        base = pygame.Surface((radius * 2 + 8, radius * 2 + 8), pygame.SRCALPHA)
-        center = (radius + 4, radius + 4)
-        pygame.draw.circle(base, (55, 65, 85, JOYSTICK_OPACITY), center, radius)
-        pygame.draw.circle(base, (230, 235, 245, JOYSTICK_OPACITY), center, radius, 4)
+        base_key = (radius, JOYSTICK_OPACITY)
+        base = JOYSTICK_BASE_CACHE.get(base_key)
+        if base is None:
+            base = pygame.Surface((radius * 2 + 8, radius * 2 + 8), pygame.SRCALPHA)
+            center = (radius + 4, radius + 4)
+            pygame.draw.circle(base, (55, 65, 85, JOYSTICK_OPACITY), center, radius)
+            pygame.draw.circle(base, (230, 235, 245, JOYSTICK_OPACITY), center, radius, 4)
+            JOYSTICK_BASE_CACHE[base_key] = base
         screen.blit(base, (cx - radius - 4, cy - radius - 4))
 
         thumb_x, thumb_y = cx, cy
@@ -622,13 +673,9 @@ def draw_touch_controls(pressed_buttons):
             thumb_x = int(cx + dx)
             thumb_y = int(cy + dy)
 
-        thumb_size = radius + 8
-        thumb = pygame.Surface((thumb_size, thumb_size), pygame.SRCALPHA)
-        thumb_center = (thumb_size // 2, thumb_size // 2)
         thumb_radius = max(16, int(radius * 0.34))
-        pygame.draw.circle(thumb, (80, 155, 220, min(255, JOYSTICK_OPACITY + 35)), thumb_center, thumb_radius)
-        pygame.draw.circle(thumb, (255, 255, 255, JOYSTICK_OPACITY), thumb_center, thumb_radius, 3)
-        screen.blit(thumb, (thumb_x - thumb_center[0], thumb_y - thumb_center[1]))
+        pygame.draw.circle(screen, (80, 155, 220), (thumb_x, thumb_y), thumb_radius)
+        pygame.draw.circle(screen, WHITE, (thumb_x, thumb_y), thumb_radius, 3)
 
 def draw_skill_buttons():
     if game_progress.get("shield_unlocked", False):
@@ -636,49 +683,172 @@ def draw_skill_buttons():
         pygame.draw.rect(screen, color, SKILL_SHIELD_RECT, border_radius=10)
         txt = HUD_FONT.render(fix_text("درع"), True, WHITE)
         screen.blit(txt, txt.get_rect(center=SKILL_SHIELD_RECT.center))
-    if game_progress.get("spear_unlocked", False):
-        pygame.draw.rect(screen, (145, 95, 35), SKILL_SPEAR_RECT, border_radius=10)
-        txt = HUD_FONT.render(fix_text("رمح"), True, WHITE)
-        screen.blit(txt, txt.get_rect(center=SKILL_SPEAR_RECT.center))
+
+
 
 def create_stage_enemies(stage, stage_layout):
     from enemies import Enemy
     import random
+
     enemies = []
-    x_pos = 1000
-    GROUND_Y = 570
-    stage_end = max(1200, int(getattr(stage_layout, "gate_x", 5000)) - 420)
+    ground_y = 570
+    stage_end = max(1200, int(getattr(stage_layout, "gate_x", 34200)) - 420)
+
+    # ??????? ?????? ???????? ???????? ??????? ?? ????? ???? ???????.
+    excluded = set()
+    for group in (
+        getattr(stage_layout, "bridge_rects", []),
+        getattr(stage_layout, "dynamic_plat_rects", [])
+    ):
+        for r in group:
+            excluded.add((r.x, r.y, r.width, r.height))
+
+    stable_platforms = []
+    for platform in stage_layout.platforms:
+        key = (platform.x, platform.y, platform.width, platform.height)
+        if key in excluded:
+            continue
+        if platform.width < 150:
+            continue
+        if platform.top < 0 or platform.top > ground_y + 5:
+            continue
+        stable_platforms.append(platform)
+
+    if not stable_platforms:
+        print("WARNING: No safe stable platforms found for enemies.")
+        return enemies
+
+    used_positions = []
+
+    def find_safe(target_x, width, height, min_gap=150):
+        best = None
+
+        for platform in stable_platforms:
+            if platform.width < width + 30:
+                continue
+
+            left = platform.left + 12
+            right = platform.right - width - 12
+
+            if right < left:
+                continue
+
+            # ???? ?????? ??? ?????? ?????? ?????? ?????? ???????.
+            candidates = {max(left, min(right, int(target_x)))}
+            step = 45
+            for x in range(left, right + 1, step):
+                candidates.add(x)
+
+            for x in candidates:
+                if x < 100 or x > stage_end:
+                    continue
+
+                if any(abs(x - old_x) < min_gap for old_x in used_positions):
+                    continue
+
+                body = pygame.Rect(
+                    int(x), int(platform.top - height),
+                    int(width), int(height)
+                )
+
+                # ??? ?? ???? ????? ????? ??? ???? ????? ???????.
+                if x + width > platform.right - 5:
+                    continue
+
+                danger = False
+
+                for hazard in stage_layout.hazards:
+                    hr = hazard["rect"]
+                    if body.inflate(100, 35).colliderect(hr):
+                        danger = True
+                        break
+
+                if danger:
+                    continue
+
+                for acid in stage_layout.acid_pools:
+                    acid_rect = pygame.Rect(
+                        acid.x - 60, acid.y - 20,
+                        acid.width + 120, acid.height + 40
+                    )
+                    if body.colliderect(acid_rect):
+                        danger = True
+                        break
+
+                if danger:
+                    continue
+
+                for mountain in stage_layout.mountains:
+                    if abs(x - mountain["peak_x"]) < 170:
+                        danger = True
+                        break
+
+                if danger:
+                    continue
+
+                distance = abs(x - target_x)
+                if best is None or distance < best[0]:
+                    best = (distance, x, platform.top)
+
+        if best is None:
+            return None
+
+        _, spawn_x, floor_y = best
+        used_positions.append(spawn_x)
+        return spawn_x, floor_y
+
+    # 30 ?????? ?????? ?? ????? ???? ???.
+    slots = 30
+    for index in range(slots):
+        target_x = int(
+            750 + index * (stage_end - 1500) / max(1, slots - 1)
+        )
+
+        position = find_safe(target_x, 55, 90, min_gap=180)
+
+        if position is None:
+            continue
+
+        spawn_x, spawn_floor = position
+        enemies.append(Enemy(spawn_x, "skeleton", spawn_floor, stage))
+
+    # ????? ?????? ??????? ??????? ??? ????? ??????? ???.
+    x_pos = 1200
     while x_pos < stage_end:
-        is_safe = True
-        if stage_layout.get_ground_y(x_pos, 55, 90, GROUND_Y - 90) != GROUND_Y:
-            is_safe = False
-        if is_safe:
-            for acid in stage_layout.acid_pools:
-                if abs(x_pos - (acid.x + acid.width/2)) < (acid.width/2 + 150):
-                    is_safe = False
-                    break
-        if is_safe:
-            for haz in stage_layout.hazards:
-                hr = haz["rect"]
-                if abs(x_pos - (hr.x + hr.w/2)) < (hr.w/2 + 150):
-                    is_safe = False
-                    break
-        if is_safe:
-            for m in stage_layout.mountains:
-                if abs(x_pos - m["peak_x"]) < 300:
-                    is_safe = False
-                    break
-        if is_safe:
-            rand_type = random.randint(1, 100)
-            if rand_type <= 70: e_type = "soldier"
-            elif rand_type <= 90: e_type = "commander"
-            else: e_type = "guard"
-            enemies.append(Enemy(x_pos, e_type, GROUND_Y, stage))
-            x_pos += random.randint(800, 1500)
+        rand_type = random.randint(1, 100)
+
+        if rand_type <= 58:
+            e_type = "soldier"
+        elif rand_type <= 82:
+            e_type = "commander"
         else:
-            x_pos += 200
-    king_x = max(500, int(getattr(stage_layout, "gate_x", 5000)) - 170)
-    enemies.append(Enemy(king_x, "king", GROUND_Y, stage))
+            e_type = "guard"
+
+        enemy_width = 50
+        enemy_height = 90
+
+        position = find_safe(
+            x_pos, enemy_width, enemy_height, min_gap=135
+        )
+
+        if position is not None:
+            spawn_x, spawn_floor = position
+            enemies.append(Enemy(spawn_x, e_type, spawn_floor, stage))
+
+        x_pos += random.randint(950, 1450)
+
+    # ????? ????? ???? ??? ???? ????? ????? ??? ????? ???????.
+    king_target = int(getattr(stage_layout, "gate_x", 34200)) - 170
+    king_position = find_safe(
+        king_target, 100, 150, min_gap=100
+    )
+
+    if king_position is not None:
+        king_x, king_floor = king_position
+        enemies.append(Enemy(king_x, "king", king_floor, stage))
+    else:
+        print("WARNING: No safe location found for the king.")
+
     return enemies
 
 menu = MainMenu(screen)
@@ -794,9 +964,6 @@ while running:
             if SKILL_SHIELD_RECT.collidepoint(pos):
                 player.activate_shield()
                 continue
-            if SKILL_SPEAR_RECT.collidepoint(pos):
-                player.throw_spear()
-                continue
 
             if TOUCH_MODE == "joystick":
                 cx, cy = JOYSTICK_CENTER
@@ -837,9 +1004,6 @@ while running:
                 continue
             if SKILL_SHIELD_RECT.collidepoint(event.pos):
                 player.activate_shield()
-                continue
-            if SKILL_SPEAR_RECT.collidepoint(event.pos):
-                player.throw_spear()
                 continue
             if TOUCH_MODE == "joystick":
                 cx, cy = JOYSTICK_CENTER
@@ -926,10 +1090,12 @@ while running:
                 dy = (player.y + player.height / 2) - (enemy.y + enemy.height / 2)
                 if abs(dx) < 760 and abs(dy) < 260 and enemy.arrow_cooldown <= 0:
                     length = max(1.0, math.hypot(dx, dy))
-                    speed = 10 if enemy.enemy_type == "guard" else 12
+                    stage_power = 1.0 + (current_stage - 1) * 0.10
+                    speed = (10 if enemy.enemy_type == "guard" else 12) + current_stage * 0.12
+                    base_arrow_damage = 12 if enemy.enemy_type == "guard" else 22
                     arrows.append({"x": enemy.x + enemy.width / 2, "y": enemy.y + 42,
                                    "vx": dx / length * speed, "vy": dy / length * speed,
-                                   "damage": 12 if enemy.enemy_type == "guard" else 22})
+                                   "damage": int(base_arrow_damage * stage_power)})
                     enemy.arrow_cooldown = 115 if enemy.enemy_type == "guard" else 90
 
             if enemy.is_alive() and enemy.state != "dead":
@@ -1065,7 +1231,6 @@ while running:
         f"القفزات: {player.jumps_left}" if game_settings.get("language", "ar") == "ar" else f"JUMPS: {player.jumps_left}",
         f"المرحلة: {current_stage}/12" if game_settings.get("language", "ar") == "ar" else f"STAGE: {current_stage}/12",
         f"الصحة: {int(max(0, player.health))}" if game_settings.get("language", "ar") == "ar" else f"HEALTH: {int(max(0, player.health))}",
-        f"العملات: {game_progress['coins']}" if game_settings.get("language", "ar") == "ar" else f"COINS: {game_progress['coins']}",
     ]
     for idx, line in enumerate(hud_lines):
         color = RED if idx == 4 else (GOLD if idx == 5 else WHITE)
@@ -1074,10 +1239,13 @@ while running:
     for i in range(player.max_lives):
         draw_heart_icon(screen, 38 + i * 38, 188, 28, filled=(i < player.lives))
 
+    coins_label = f"العملات: {game_progress['coins']}" if game_settings.get("language", "ar") == "ar" else f"COINS: {game_progress['coins']}"
+    screen.blit(font.render(fix_text(coins_label), True, GOLD), (20, 215))
+
     if player.shield_timer > 0:
         sec_left = math.ceil(player.shield_timer / 60.0)
         shield_label = f"الدرع: {sec_left}ث" if game_settings.get("language", "ar") == "ar" else f"SHIELD: {sec_left}s"
-        screen.blit(font.render(fix_text(shield_label), True, CYAN), (20, 215))
+        screen.blit(font.render(fix_text(shield_label), True, CYAN), (20, 245))
 
     for spear in spear_projectiles:
         pygame.draw.line(screen, (210, 190, 140), (int(spear["x"] - camera_x), int(spear["y"] - camera_y)), (int(spear["x"] + 38 - camera_x), int(spear["y"] - camera_y)), 5)
@@ -1093,7 +1261,7 @@ while running:
         ready_label = f"القاضية بعد: {ready_left}ث" if game_settings.get("language", "ar") == "ar" else f"ULTIMATE: {ready_left}s"
     else:
         ready_label = "القاضية جاهزة" if game_settings.get("language", "ar") == "ar" else "ULTIMATE READY"
-    screen.blit(font.render(fix_text(ready_label), True, GOLD), (20, 245))
+    screen.blit(font.render(fix_text(ready_label), True, GOLD), (20, 275))
     draw_pause_button_and_overlay(paused, game_settings)
 
     present(screen)

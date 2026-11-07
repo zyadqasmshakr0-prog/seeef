@@ -10,6 +10,7 @@ DEFAULT_PROGRESS = {
     "completed_stages": [],
     "sword_level": 0,
     "shield_unlocked": False,
+    "shield_level": 0,
     "spear_unlocked": False,
     "extra_jump_level": 0,
     "berserk_level": 0,
@@ -31,6 +32,13 @@ def load_progress():
     for key in ("sword_level", "extra_jump_level", "berserk_level"):
         data[key] = max(0, int(data.get(key, 0)))
     data["shield_unlocked"] = bool(data.get("shield_unlocked", False))
+    # حفظ التوافق مع ملفات التقدم القديمة: الدرع المفتوح سابقاً يبدأ
+    # بالمستوى الأول (20 ثانية) بدلاً من فقدانه.
+    data["shield_level"] = max(0, min(5, int(data.get("shield_level", 0))))
+    if data["shield_unlocked"] and data["shield_level"] == 0:
+        data["shield_level"] = 1
+    if data["shield_level"] > 0:
+        data["shield_unlocked"] = True
     data["spear_unlocked"] = bool(data.get("spear_unlocked", False))
     return data
 
