@@ -942,6 +942,40 @@ class StageLayout:
 
         self.draw_gate(screen, cam_x, cam_y)
 
+    def prune_behind(self, cutoff_x):
+        """احذف المنصات والفخاخ والزينة التي تجاوزها اللاعب."""
+        cutoff_x = int(cutoff_x)
+
+        # احتفظ بالمنصة التي ما زالت تمتد إلى المنطقة الحالية، واقص الجزء الخلفي منها.
+        kept_platforms = []
+        for rect in self.platforms:
+            if rect.right >= cutoff_x:
+                if rect.left < cutoff_x:
+                    rect.width = max(1, rect.right - cutoff_x)
+                    rect.left = cutoff_x
+                kept_platforms.append(rect)
+        self.platforms = kept_platforms
+        valid_ids = {id(rect) for rect in self.platforms}
+        self.bridge_rects = [r for r in self.bridge_rects if id(r) in valid_ids]
+        self.dynamic_plat_rects = [r for r in self.dynamic_plat_rects if id(r) in valid_ids]
+
+        self.hazards = [
+            h for h in self.hazards
+            if h.get("rect") is not None and h["rect"].right >= cutoff_x
+        ]
+        self.trees = [t for t in self.trees if t.get("x", cutoff_x) >= cutoff_x]
+        self.acid_pools = [r for r in self.acid_pools if r.right >= cutoff_x]
+        self.mountains = [
+            m for m in self.mountains
+            if (m.get("x", cutoff_x) + m.get("width", 0)) >= cutoff_x
+        ]
+        self.projectiles = [p for p in self.projectiles if p.get("x", cutoff_x) >= cutoff_x]
+        if isinstance(self.wrecking_balls, list):
+            self.wrecking_balls = [
+                item for item in self.wrecking_balls
+                if (item.get("x", cutoff_x) if isinstance(item, dict) else getattr(item, "x", cutoff_x)) >= cutoff_x
+            ]
+
     def draw_gate(self, screen, camera_x, camera_y):
         x = int(self.gate_x - camera_x)
         y = int(GROUND_Y - 170 - camera_y)

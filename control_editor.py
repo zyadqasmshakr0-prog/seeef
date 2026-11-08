@@ -72,7 +72,7 @@ LABELS = {
     "attack": ("X", "ATTACK"),
     "special": ("*", "SPECIAL"),
     "legendary": ("!", "ULTIMATE"),
-    "spear": (">", "SPEAR")
+    "spear": (">", "ARROWS")
 }
 
 # الترجمات المستخدمة داخل المحرر
@@ -101,7 +101,7 @@ TRANSLATIONS = {
     "ATTACK": "هجوم",
     "SPECIAL": "هجوم خاص",
     "ULTIMATE": "هجوم خارق",
-    "SPEAR": "???",
+    "SPEAR": "سهام",
 
     "NONE": "لا شيء",
     "SELECTED": "المحدد",

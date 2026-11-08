@@ -12,6 +12,8 @@ DEFAULT_PROGRESS = {
     "shield_unlocked": False,
     "shield_level": 0,
     "spear_unlocked": False,
+    "arrow_ammo": 0,
+    "arrow_level": 0,
     "extra_jump_level": 0,
     "berserk_level": 0,
 }
@@ -19,6 +21,7 @@ DEFAULT_PROGRESS = {
 
 def load_progress():
     data = dict(DEFAULT_PROGRESS)
+    saved = {}
     try:
         with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
             saved = json.load(f)
@@ -40,6 +43,12 @@ def load_progress():
     if data["shield_level"] > 0:
         data["shield_unlocked"] = True
     data["spear_unlocked"] = bool(data.get("spear_unlocked", False))
+    data["arrow_level"] = max(0, int(data.get("arrow_level", 0)))
+    # التوافق مع اللاعبين الذين فتحوا الرمح في إصدار سابق.
+    saved_data = saved if isinstance(saved, dict) else {}
+    if data["spear_unlocked"] and "arrow_ammo" not in saved_data:
+        data["arrow_ammo"] = 30
+    data["arrow_ammo"] = max(0, int(data.get("arrow_ammo", 0)))
     return data
 
 

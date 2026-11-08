@@ -65,21 +65,26 @@ DEFAULT_SETTINGS = {
 
 def fix_text(text):
     text = str(text)
-    if not ARABIC_SUPPORT:
+
+    if not text or not ARABIC_SUPPORT:
         return text
 
-    if any("\u0600" <= c <= "\u06FF" for c in text):
+    # منع إعادة معالجة النص المشكّل
+    if any("\uFE70" <= c <= "\uFEFF" for c in text):
+        return text
+
+    if not any("\u0600" <= c <= "\u06FF" for c in text):
+        return text
+
+    try:
+        reshaped = arabic_reshaper.reshape(text)
         try:
-            reshaped = arabic_reshaper.reshape(text)
-            try:
-                return get_display(reshaped, base_dir="R")
-            except TypeError:
-                return get_display(reshaped)
-        except Exception:
-            return text
-
-    return text
-
+            return get_display(reshaped, base_dir="R")
+        except TypeError:
+            return get_display(reshaped)
+    except Exception as e:
+        print("Arabic shaping error:", e)
+        return text
 
 def get_arabic_font(size):
     font_paths = [
@@ -551,15 +556,13 @@ class MainMenu:
                         costs = {
                             "sword": 250 + self.progress["sword_level"] * 100,
                             "shield": (5000, 6000, 7000, 8000, 9000)[min(4, int(self.progress.get("shield_level", 0)))],
-                            "spear": 3000,
+                            "spear": 3000 if not self.progress["spear_unlocked"] else 1000,
                             "jump": 6000 + self.progress["extra_jump_level"] * 1000,
                             "berserk": 1500 + self.progress["berserk_level"] * 500,
                         }
                         for skill, btn in self.armory_buttons.items():
                             if btn.is_clicked(event):
                                 if skill == "shield" and int(self.progress.get("shield_level", 0)) >= 5:
-                                    break
-                                if skill == "spear" and self.progress["spear_unlocked"]:
                                     break
                                 if skill == "jump" and self.progress["extra_jump_level"] >= 3:
                                     break
@@ -574,7 +577,17 @@ class MainMenu:
                                         self.progress["shield_unlocked"] = True
                                         self.progress["shield_level"] = min(5, int(self.progress.get("shield_level", 0)) + 1)
                                     elif skill == "spear":
-                                        self.progress["spear_unlocked"] = True
+                                        if not self.progress["spear_unlocked"]:
+                                            self.progress["spear_unlocked"] = True
+                                            self.progress["arrow_ammo"] = 30
+                                            self.progress["arrow_level"] = 0
+                                        else:
+                                            current_arrow_level = int(self.progress.get("arrow_level", 0))
+                                            if current_arrow_level == 0:
+                                                self.progress["arrow_ammo"] = 100
+                                            else:
+                                                self.progress["arrow_ammo"] = int(self.progress.get("arrow_ammo", 0)) + 100
+                                            self.progress["arrow_level"] = current_arrow_level + 1
                                     elif skill == "jump":
                                         self.progress["extra_jump_level"] = min(3, self.progress["extra_jump_level"] + 1)
                                     elif skill == "berserk":
@@ -704,7 +717,7 @@ class MainMenu:
                 costs = {
                     "sword": 250 + self.progress["sword_level"] * 100,
                     "shield": (5000, 6000, 7000, 8000, 9000)[min(4, int(self.progress.get("shield_level", 0)))],
-                    "spear": 3000,
+                    "spear": 3000 if not self.progress["spear_unlocked"] else 1000,
                     "jump": 6000 + self.progress["extra_jump_level"] * 1000,
                     "berserk": 1500 + self.progress["berserk_level"] * 500,
                 }
@@ -716,7 +729,12 @@ class MainMenu:
                         (f"Shield: {10 + int(self.progress.get('shield_level', 0)) * 10}s | MAX LEVEL" if int(self.progress.get("shield_level", 0)) >= 5 else f"Upgrade shield to {20 + int(self.progress.get('shield_level', 0)) * 10}s | {costs['shield']} coins")
                         if self.progress["shield_unlocked"] else f"Unlock 20-second shield | {costs['shield']} coins"
                     ),
-                    "spear": self.t("رمي الرمح - تم الفتح" if self.progress['spear_unlocked'] else f"فتح مهارة رمي الرمح | {costs['spear']} عملة", "Spear throw - unlocked" if self.progress['spear_unlocked'] else f"Unlock spear throw | {costs['spear']} coins"),
+                    "spear": self.t(
+                        (f"تطوير السهام إلى 100 سهم | {costs['spear']} عملة" if int(self.progress.get("arrow_level", 0)) == 0 else f"تطوير السهام +100 | المخزون: {self.progress.get('arrow_ammo', 0)} | {costs['spear']} عملة")
+                        if self.progress['spear_unlocked'] else f"شراء 30 سهماً | {costs['spear']} عملة",
+                        (f"Upgrade arrows to 100 | {costs['spear']} coins" if int(self.progress.get("arrow_level", 0)) == 0 else f"Upgrade arrows +100 | Ammo: {self.progress.get('arrow_ammo', 0)} | {costs['spear']} coins")
+                        if self.progress['spear_unlocked'] else f"Buy 30 arrows | {costs['spear']} coins"
+                    ),
                     "jump": self.t(f"قفزة إضافية - المستوى {self.progress['extra_jump_level']} | {costs['jump']} عملة", f"Extra jump level {self.progress['extra_jump_level']} | {costs['jump']} coins"),
                     "berserk": self.t(f"قوة الغضب - المستوى {self.progress['berserk_level']} | {costs['berserk']} عملة", f"Berserk damage level {self.progress['berserk_level']} | {costs['berserk']} coins"),
                 }

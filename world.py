@@ -1356,6 +1356,21 @@ class World:
         self.ground_y = original_ground_y
 
 
+    def prune_behind(self, cutoff_x):
+        """تخلص من تفاصيل العالم التي أصبحت خلف اللاعب نهائياً."""
+        for name in ("trees", "castles", "obstacles", "buildings",
+                     "mountains", "clouds", "stars", "particles"):
+            items = getattr(self, name, None)
+            if not isinstance(items, list):
+                continue
+            kept = []
+            for item in items:
+                x = item.get("x", cutoff_x) if isinstance(item, dict) else getattr(item, "x", cutoff_x)
+                width = item.get("width", item.get("size", 0)) if isinstance(item, dict) else 0
+                if x + width >= cutoff_x:
+                    kept.append(item)
+            setattr(self, name, kept)
+
     # -----------------------------------------------------
     # تغيير المرحلة
     # -----------------------------------------------------

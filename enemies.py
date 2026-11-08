@@ -124,6 +124,8 @@ class Enemy:
         self.attack_cooldown = 0
         self.arrow_cooldown = 100 if self.enemy_type == "guard" else 150
         self.reward_claimed = False
+        self.remove_from_world = False
+        self.dead_remove_timer = None
 
         # تحميل حركات الهيكل العظمي مع تقطيعها الصحيح
         # تنبيه: إذا ظهر الهجوم بشكل مقطوع، افتح صورة Skeleton Attack وعدّ الهياكل فيها واكتب الرقم بدلاً من 18
@@ -152,6 +154,9 @@ class Enemy:
             self.state = "dead"
             if "dead" in self.animations:
                 self.animations["dead"].current_frame = 0
+                self.animations["dead"].finished = False
+            self.dead_remove_timer = None
+            self.remove_from_world = False
         else:
             # تشغيل حركة تلقي الضربة عند الإصابة
             self.state = "hit"
@@ -168,14 +173,31 @@ class Enemy:
     
 
     def update(self, player_x, player_y, stage_layout):
-        # الجاذبية للميت حتى يسقط
+        # العدو الميت يكمل حركة الموت، يسقط على الأرض، ثم يختفي بعد ثانية.
         if not self.is_alive():
+            dead_anim = self.animations.get("dead")
+            if dead_anim and dead_anim.frames and not dead_anim.finished:
+                dead_anim.current_frame += dead_anim.speed
+                if dead_anim.current_frame >= len(dead_anim.frames):
+                    dead_anim.current_frame = len(dead_anim.frames) - 1
+                    dead_anim.finished = True
+
             self.vel_y += self.gravity
             self.y += self.vel_y
             self.ground_y = stage_layout.get_ground_y(self.x, self.width, self.height, self.y)
-            if self.y >= self.ground_y - self.height:
+            landed = self.y >= self.ground_y - self.height
+            if landed:
                 self.y = self.ground_y - self.height
                 self.vel_y = 0
+
+            animation_done = not dead_anim or not dead_anim.frames or dead_anim.finished
+            if landed and animation_done:
+                if self.dead_remove_timer is None:
+                    self.dead_remove_timer = 60
+                else:
+                    self.dead_remove_timer -= 1
+                    if self.dead_remove_timer <= 0:
+                        self.remove_from_world = True
             return
 
         # نظام "الاستراحة" للهجوم لمنع الاهتزاز السريع
@@ -292,8 +314,9 @@ class Enemy:
         animator = None if getattr(self, "disguised", False) and self.is_alive() else self.animations.get(current_anim)
         
         if animator and animator.frames:
-            # إيقاف التحديث عند آخر لقطة للموت، وتجميد الأنيميشن أثناء النهاية
-            if current_anim == "dead" and animator.current_frame >= len(animator.frames) - 1:
+            # أنيميشن الموت يُحدّث داخل update حتى يستمر حتى لو خرج العدو من الشاشة.
+            # لا نحدّثه هنا مرة ثانية كي لا تتضاعف سرعته أو يعيد الدوران.
+            if current_anim == "dead":
                 pass
             elif current_anim in ["hit", "attack"] and animator.finished:
                 pass

@@ -39,6 +39,7 @@ if IS_ANDROID:
     except (pygame.error, TypeError):
         pygame.display_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         screen = pygame.Surface((WIDTH, HEIGHT)).convert()
+
 else:
     pygame.display_surface = pygame.display.set_mode((WIDTH, HEIGHT))
     screen = pygame.display_surface
@@ -63,6 +64,8 @@ GROUND_Y = 570
 
 camera_x = 0
 camera_y = 0
+pruned_world_x = 0
+last_prune_camera_x = 0
 
 class PlayerAnimator:
     _sheet_cache = {}
@@ -343,14 +346,16 @@ class Player:
     def throw_spear(self):
         if not game_progress.get("spear_unlocked", False):
             return
-        if len(spear_projectiles) >= 3:
+        if int(game_progress.get("arrow_ammo", 0)) <= 0 or len(spear_projectiles) >= 3:
             return
         spear_projectiles.append({
             "x": self.x + (self.width if self.facing > 0 else -20),
             "y": self.y + 42,
-            "vx": self.facing * 16,
-            "damage": 90 + int(game_progress.get("sword_level", 0)) * 10,
+            "vx": self.facing * 18,
+            "damage": 65 + int(game_progress.get("sword_level", 0)) * 8,
         })
+        game_progress["arrow_ammo"] = max(0, int(game_progress.get("arrow_ammo", 0)) - 1)
+        save_progress(game_progress)
 
     def damage_nearby(self, enemies, damage, is_heavy=False):
         attack_range = 150
@@ -516,7 +521,7 @@ def apply_touch_settings(settings):
         CONTROL_OPACITY[name] = max(0, min(255, int(opacity.get(name, 190))))
 
 CONTROL_SYMBOLS = {"back": "<", "forward": ">", "down": "v", "jump": "^", "attack": "X", "special": "*", "legendary": "!", "spear": ">"}
-CONTROL_LABELS = {"back": "BACK", "forward": "MOVE", "down": "CROUCH", "jump": "JUMP", "attack": "ATTACK", "special": "SPECIAL", "legendary": "ULTIMATE", "spear": "SPEAR"}
+CONTROL_LABELS = {"back": "BACK", "forward": "MOVE", "down": "CROUCH", "jump": "JUMP", "attack": "ATTACK", "special": "SPECIAL", "legendary": "ULTIMATE", "spear": "ARROWS"}
 
 def get_control_at(pos):
     for name, rect in CONTROL_RECTS.items():
@@ -628,7 +633,7 @@ def draw_touch_controls(pressed_buttons):
         else: color = (65, 75, 90)
 
         opacity = CONTROL_OPACITY.get(name, 190)
-        arabic_labels = {"back": "يسار", "forward": "يمين", "down": "انحناء", "jump": "قفز", "attack": "هجوم", "special": "خاص", "legendary": "قاضية", "spear": "???"}
+        arabic_labels = {"back": "يسار", "forward": "يمين", "down": "انحناء", "jump": "قفز", "attack": "هجوم", "special": "خاص", "legendary": "قاضية", "spear": "سهام"}
         label_text = arabic_labels.get(name, CONTROL_LABELS[name]) if game_settings.get("language", "ar") == "ar" else CONTROL_LABELS[name]
         cache_key = (name, rect.width, rect.height, color, opacity, label_text)
         button_surface = TOUCH_BUTTON_CACHE.get(cache_key)
@@ -866,6 +871,7 @@ arrows = []
 stage_reward_claimed = False
 
 current_stage = starting_stage
+game_progress["arrow_ammo"] = 30
 king_defeated = False
 
 # كل إصبع له معرّف مستقل. استخدام touch_id مع finger_id يمنع
@@ -895,7 +901,7 @@ joystick_auto_jump = False
 paused = False
 
 def return_to_main_menu():
-    global starting_stage, game_settings, current_stage, king_defeated, enemies, paused, camera_x, camera_y, game_progress, spear_projectiles, arrows, stage_reward_claimed
+    global starting_stage, game_settings, current_stage, king_defeated, enemies, paused, camera_x, camera_y, game_progress, spear_projectiles, arrows, stage_reward_claimed, pruned_world_x, last_prune_camera_x
     paused = False
     touch_assignments.clear()
     joystick_fingers.clear()
@@ -914,6 +920,8 @@ def return_to_main_menu():
     enemies = create_stage_enemies(current_stage, stage_layout)
     camera_x = 0
     camera_y = 0
+    pruned_world_x = 0
+    last_prune_camera_x = 0
     king_defeated = False
 
 running = True
@@ -1058,6 +1066,8 @@ while running:
     
     if not paused:
         player.update(keys, enemies, pressed_buttons)
+        # لا تسمح بالعودة إلى منطقة تم حذفها من الذاكرة.
+        player.x = max(player.x, pruned_world_x)
         stage_layout.check_hazards(player)
 
         if player.y > GROUND_Y + 350:
@@ -1073,10 +1083,9 @@ while running:
 
         for enemy in enemies:
             enemy_busy = (
-                getattr(enemy, "state", "idle") != "idle"
-                or getattr(enemy, "vel_y", 0) != 0
+                getattr(enemy, "state", "idle") in ("hit", "attack", "dead")
+                or abs(getattr(enemy, "vel_y", 0)) > 0.1
                 or abs(getattr(enemy, "knockback_x", 0)) > 0.1
-                or getattr(enemy, "attack_cooldown", 0) > 0
                 or getattr(enemy, "hurt_timer", 0) > 0
             )
             if not (update_min_x <= enemy.x <= update_max_x or enemy_busy):
@@ -1123,6 +1132,7 @@ while running:
                 enemy.reward_claimed = True
                 reward = 6 if enemy.enemy_type == "king" else (4 if enemy.enemy_type == "guard" else 2)
                 add_coins(game_progress, reward)
+        enemies = [enemy for enemy in enemies if not getattr(enemy, "remove_from_world", False)]
 
         # Spear projectiles travel forward and damage the first enemy they hit.
         for spear in spear_projectiles[:]:
@@ -1150,6 +1160,7 @@ while running:
                 arrows.remove(arrow)
 
         if player.health <= 0:
+            
             player.lives -= 1
             if player.lives > 0:
                 safe_x, safe_y = stage_layout.find_safe_respawn(player.x, player.width, player.height)
@@ -1161,6 +1172,8 @@ while running:
                 player.health = player.max_health
                 player.shield_timer = 300
             else:
+                game_progress["arrow_ammo"] = 30
+                world.set_stage(current_stage)
                 stage_layout = StageLayout(stage=current_stage)
                 enemies = create_stage_enemies(current_stage, stage_layout)
                 spear_projectiles.clear()
@@ -1175,6 +1188,8 @@ while running:
                 player.shield_timer = 180
                 camera_x = 0
                 camera_y = 0
+                pruned_world_x = 0
+                last_prune_camera_x = 0
 
     king_alive = False
     for enemy in enemies:
@@ -1200,12 +1215,29 @@ while running:
             player.vel_y = 0
             camera_x = 0
             camera_y = 0
+            pruned_world_x = 0
+            last_prune_camera_x = 0
             king_defeated = False
             stage_reward_claimed = False
 
     target_camera_x = (player.x - WIDTH // 2)
     camera_x += (target_camera_x - camera_x) * 0.1
-    camera_x = max(0, min(camera_x, max(0, stage_layout.stage_length - WIDTH)))
+    camera_x = max(pruned_world_x, min(camera_x, max(0, stage_layout.stage_length - WIDTH)))
+
+    # إزالة العالم القديم على دفعات بدلاً من إبقاء آلاف العناصر طوال المرحلة.
+    if camera_x - last_prune_camera_x >= 500:
+        new_cutoff = max(pruned_world_x, int(camera_x) - 1400)
+        if new_cutoff > pruned_world_x:
+            pruned_world_x = new_cutoff
+            world.prune_behind(pruned_world_x)
+            stage_layout.prune_behind(pruned_world_x)
+            # الأعداء الأحياء خلف الحد لا يمكن الرجوع إليهم؛ احتفظ بالموتى فقط
+            # حتى يكملوا أنيميشن السقوط والاختفاء.
+            enemies = [
+                enemy for enemy in enemies
+                if enemy.x + enemy.width >= pruned_world_x or not enemy.is_alive()
+            ]
+        last_prune_camera_x = camera_x
 
     target_camera_y = (player.y + player.height // 2 - HEIGHT // 2)
     camera_y += (target_camera_y - camera_y) * 0.1
@@ -1241,6 +1273,9 @@ while running:
 
     coins_label = f"العملات: {game_progress['coins']}" if game_settings.get("language", "ar") == "ar" else f"COINS: {game_progress['coins']}"
     screen.blit(font.render(fix_text(coins_label), True, GOLD), (20, 215))
+    if game_progress.get("spear_unlocked", False):
+        ammo_label = f"السهام: {game_progress.get('arrow_ammo', 0)}" if game_settings.get("language", "ar") == "ar" else f"ARROWS: {game_progress.get('arrow_ammo', 0)}"
+        screen.blit(font.render(fix_text(ammo_label), True, GOLD), (20, 305))
 
     if player.shield_timer > 0:
         sec_left = math.ceil(player.shield_timer / 60.0)

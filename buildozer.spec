@@ -11,7 +11,7 @@ source.exclude_dirs = tests,bin,.github,p4a-recipes
 version = 1.0
 
 # تثبيت Python وHost Python على الإصدار نفسه
-requirements = python3==3.10.12,hostpython3==3.10.12,pygame,arabic-reshaper,python-bidi
+requirements = python3==3.10.12,hostpython3==3.10.12,pygame,six,arabic-reshaper==3.0.0,python-bidi==0.4.2
 
 orientation = landscape
 fullscreen = 1
